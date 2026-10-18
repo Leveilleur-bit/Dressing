@@ -53,6 +53,14 @@ L'appli crée elle-même `dressing.json` au premier lancement. Les photos prises
 
 Sur un appareil partagé, on peut ajouter les deux profils et passer de l'un à l'autre dans Réglages.
 
+### 4. Optionnel : la styliste IA
+
+1. Crée un compte sur **console.anthropic.com**, ajoute un peu de crédit (5 $ suffisent pour plusieurs mois) et fixe une **limite de dépense mensuelle** dans les réglages de facturation.
+2. Crée une clé API (**API Keys → Create Key**).
+3. Dans l'appli : **Réglages → Styliste IA**, colle la clé, puis **Vérifier et enregistrer**.
+
+La styliste reçoit la liste écrite des vêtements, la météo et les styles choisis, jamais les photos. Elle coûte environ 1 centime par demande.
+
 ## Si un téléphone est perdu
 
 Supprime son jeton dans GitHub (Settings → Developer settings → Fine-grained tokens → Delete). L'autre dressing n'est pas touché. Crée un nouveau jeton pour le nouveau téléphone.
