@@ -8,7 +8,7 @@ import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
 import { askStylist, testKey, AiError } from "./js/ai.js";
 
-const VERSION = "1.3.0";
+const VERSION = "1.3.1";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -40,6 +40,7 @@ const weekendOcc = () => prefs().weekendOcc || "quotidien";
 let search = "";
 const normTxt = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const SORT_DAYS = 180;
+const DIRTY_DAYS = 7;
 function toSort(i) {
   const ref = i.lastWorn ? i.lastWorn : i.createdAt ? new Date(i.createdAt).toISOString() : null;
   if (!ref) return false;
@@ -64,7 +65,10 @@ function liveItems() {
   return (d.items || []).filter((i) => !i.deleted).map((i) => ({
     ...i,
     lastWorn: last.has(i.id) ? last.get(i.id) + "T12:00:00" : i.lastWorn || null,
-    wornCount: (count.get(i.id) || 0) + (i.demo && i.lastWorn ? 3 : 0)
+    wornCount: (count.get(i.id) || 0) + (i.demo && i.lastWorn ? 3 : 0),
+    // le linge sale redevient propre tout seul au bout d'une semaine
+    dirty: !!i.dirty && Date.now() - (i.dirtyAt || i.updatedAt || 0) < DIRTY_DAYS * 864e5,
+    cleanIn: i.dirty ? Math.max(1, Math.ceil((DIRTY_DAYS * 864e5 - (Date.now() - (i.dirtyAt || i.updatedAt || 0))) / 864e5)) : null
   }));
 }
 
@@ -311,7 +315,7 @@ function renderWardrobe() {
   const dirty = all.filter((i) => i.dirty);
   $("laundry").hidden = !dirty.length;
   $("laundry-row").innerHTML = dirty.map((it) => '<button type="button" class="laundry-item" data-clean="' + esc(it.id) + '">' + thumb(it) +
-    '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">Lavé</span></button>').join("");
+    '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">Lavé</span><span class="note small">Propre seul dans ' + it.cleanIn + " j</span></button>").join("");
   const q = normTxt(search.trim());
   $("trier-hint").hidden = catFilter !== "trier";
   const list = all.filter((i) => inFilter(i, catFilter) && (!q || normTxt(i.name).includes(q) || normTxt((COLORS[i.color] || [""])[0]).includes(q)))
@@ -328,7 +332,7 @@ function setDirty(id, value) {
   if (isDemo()) return;
   sync.change((d) => {
     const it = d.items.find((i) => i.id === id);
-    if (it) { it.dirty = value; it.updatedAt = Date.now(); }
+    if (it) { it.dirty = value; it.dirtyAt = value ? Date.now() : null; it.updatedAt = Date.now(); }
   });
 }
 
@@ -789,7 +793,7 @@ async function saveItemForm(e) {
     if (draft.newBlob) photo = await sync.uploadPhoto(draft.newBlob, id);
     const item = {
       id, name: draft.name, cat: draft.cat, color: draft.color, pattern: draft.pattern, warmth: draft.warmth,
-      seasons: draft.seasons, rain: draft.rain, occ: draft.occ, dirty: !!draft.dirty, photo,
+      seasons: draft.seasons, rain: draft.rain, occ: draft.occ, dirty: !!draft.dirty, dirtyAt: draft.dirty ? (editing && editing.dirty && editing.dirtyAt) || Date.now() : null, photo,
       styles: draft.styles, material: draft.material || null, acc: draft.cat === "accessoire" ? draft.acc || "sac" : null,
       createdAt: editing ? editing.createdAt || Date.now() : Date.now(), updatedAt: Date.now()
     };
@@ -883,7 +887,7 @@ function bind() {
   delegate("laundry-row", "clean", (id) => { setDirty(id, false); toast("Remis dans le dressing."); });
   on("btn-all-clean", "click", () => {
     if (!sync) return;
-    sync.change((d) => { for (const it of d.items) if (it.dirty) { it.dirty = false; it.updatedAt = Date.now(); } });
+    sync.change((d) => { for (const it of d.items) if (it.dirty) { it.dirty = false; it.dirtyAt = null; it.updatedAt = Date.now(); } });
     toast("Tout est propre.");
   });
   on("btn-add", "click", () => openItem(null));
