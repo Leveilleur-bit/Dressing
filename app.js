@@ -4,15 +4,18 @@ import { Sync, LS, uid, getProfiles, saveProfiles, getActiveId, setActiveId } fr
 import { Repo, parseRepo } from "./js/github.js";
 import { fetchDay, searchCity, locate } from "./js/weather.js";
 import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.js";
+import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
+import { askStylist, testKey, AiError } from "./js/ai.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // ---------------- état ----------------
 let sync = null;               // synchronisation du profil actif (null = exemple)
 let doc = null;                // données du dressing affiché
-let demoDoc = { items: demoItems(), history: [], feedback: {}, agenda: {} };
+let demoDoc = { items: demoItems(), history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 } };
+let aiBusy = false;
 let dayOffset = new Date().getHours() >= 19 ? 1 : 0;
 let weather = { 0: null, 1: null };
 let weatherError = null;
@@ -28,6 +31,8 @@ let editingDay = null, dayDraft = null;
 const saveSettings = () => LS.set("dressing:settings", settings);
 const isDemo = () => !sync;
 const data = () => (sync ? doc : demoDoc);
+const prefs = () => data().prefs || { styles: [], note: "", t: 0 };
+const aiKey = () => LS.get("dressing:aikey", "");
 
 function dayStr(offset) {
   const d = new Date(); d.setDate(d.getDate() + offset);
@@ -108,13 +113,13 @@ function context() {
     const def = MANUAL_TEMPS.find((t) => t.id === (settings.manual.temp || defaultManual())) || MANUAL_TEMPS[1];
     w = { morning: def.m, afternoon: def.a, rain: !!settings.manual.rain, wind: 0, snow: false };
   }
-  return { day, season: seasonOf(day), occ, mood, important: !!(agenda && agenda.important), agenda, restDays: settings.restDays, w, live: !!wx };
+  return { day, season: seasonOf(day), occ, mood, important: !!(agenda && agenda.important), agenda, restDays: settings.restDays, w, live: !!wx, styles: prefs().styles || [] };
 }
 function defaultManual() {
   const m = new Date().getMonth();
   return [11, 0, 1].includes(m) ? "froid" : [5, 6, 7].includes(m) ? "chaud" : [4, 8].includes(m) ? "doux" : "frais";
 }
-const ctxKey = (c) => [c.day, c.occ, c.mood, c.important, Math.round(c.w.morning), Math.round(c.w.afternoon), c.w.rain, c.restDays].join("/");
+const ctxKey = (c) => [c.day, c.occ, c.mood, c.important, Math.round(c.w.morning), Math.round(c.w.afternoon), c.w.rain, c.restDays, c.styles.join("+")].join("/");
 
 // ---------------- AUJOURD'HUI ----------------
 function renderWeather() {
@@ -159,7 +164,6 @@ function renderControls() {
   $("occ-label").textContent = c.agenda && !occOverride[c.day] ? "Occasion · d'après ton agenda" + (c.agenda.note ? " : " + c.agenda.note : "") : "Occasion";
   $("occ-chips").innerHTML = OCCS.map((o) => '<button type="button" class="chip" id="occ-' + o.id + '" data-o="' + o.id + '" aria-pressed="' + (c.occ === o.id) + '">' + o.label + "</button>").join("");
   $("mood-chips").innerHTML = MOODS.map((m) => '<button type="button" class="chip" id="mood-' + (m.id || "aucune") + '" data-m="' + m.id + '" aria-pressed="' + (mood === m.id) + '">' + m.label + "</button>").join("");
-  $("outfit-title").textContent = dayOffset === 0 ? "Tenue du jour" : "Tenue de demain";
   const season = SEASONS.find((s) => s.id === c.season).label;
   $("ctx-label").textContent = season + (c.important ? " · important" : "");
   $("day-today").setAttribute("aria-pressed", dayOffset === 0);
@@ -169,6 +173,8 @@ function renderControls() {
 function renderOutfit() {
   const lay = $("lay"), why = $("why");
   const c = context();
+  $("outfit-title").textContent = current && current.ai ? current.title : dayOffset === 0 ? "Tenue du jour" : "Tenue de demain";
+  $("btn-ai").disabled = aiBusy || !current;
   if (!current) {
     lay.innerHTML = "";
     const note = missingNote(liveItems(), c);
@@ -187,7 +193,8 @@ function renderOutfit() {
   }).join("");
   hydratePhotos(lay);
   const lines = current.reasons.slice();
-  const note = missingNote(liveItems(), c);
+  if (current.tip) lines.push("Astuce : " + current.tip);
+  const note = current.ai ? "" : missingNote(liveItems(), c);
   if (note) lines.push(note);
   why.innerHTML = lines.map((l) => "<li>" + esc(l) + "</li>").join("");
   const fb = (data().feedback || {})[current.key];
@@ -228,6 +235,48 @@ function wearCurrent() {
   msg.innerHTML = "Noté pour " + (dayOffset === 0 ? "aujourd'hui" : "demain") + ". Ce soir, tu mets quelque chose au sale ?" +
     '<span class="chips" style="margin-top:8px">' + worn.map((p) => '<button type="button" class="chip" data-dirty="' + esc(p.id) + '" aria-pressed="false">' + esc(p.name) + "</button>").join("") + "</span>";
   msg.hidden = false;
+}
+
+
+async function askAi() {
+  if (!current) return;
+  const key = aiKey();
+  const msg = $("outfit-msg");
+  if (!key) { showTab("settings"); setTimeout(() => $("ai-key").focus(), 50); toast("Ajoute d'abord ta clé API Anthropic."); return; }
+  aiBusy = true; const btn = $("btn-ai"); btn.disabled = true; btn.textContent = "La styliste réfléchit…";
+  const c = context();
+  const items = liveItems();
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const fb = data().feedback || {};
+  const names = (k) => k.split("|").map((id) => byId.get(id)).filter(Boolean).map((i) => i.name).join(" + ");
+  const liked = Object.keys(fb).filter((k) => fb[k].v === 1).map(names).filter(Boolean);
+  const disliked = Object.keys(fb).filter((k) => fb[k].v === -1).map(names).filter(Boolean);
+  try {
+    const r = await askStylist(key, { items, ctx: c, weather: weather[dayOffset], prefs: prefs(), liked, disliked, current: current.pieces.map((p) => p.name).join(" + ") });
+    const pieces = r.ids.map((id) => byId.get(id));
+    current = { key: comboKey(pieces), pieces, reasons: r.why, tip: r.tip, title: r.title, ai: true };
+    seen.push(current.key);
+    wornKey = null; msg.hidden = true;
+    renderOutfit();
+  } catch (e) {
+    const k = e instanceof AiError ? e.kind : "other";
+    msg.textContent = {
+      auth: "Anthropic refuse la clé API. Vérifie-la dans Réglages.",
+      credit: "Le compte Anthropic n'a plus de crédit. Recharge-le dans la console Anthropic.",
+      rate: "Trop de demandes d'un coup. Réessaie dans une minute.",
+      busy: "La styliste est surchargée pour l'instant. Réessaie dans quelques minutes.",
+      network: "Pas de connexion : la styliste a besoin d'internet.",
+      format: "La réponse de la styliste n'était pas exploitable. Réessaie."
+    }[k] || "La demande n'a pas abouti (" + e.message + ").";
+    msg.hidden = false;
+  }
+  aiBusy = false; btn.textContent = "Demander à la styliste"; btn.disabled = !current;
+}
+
+function setPrefs(patch) {
+  const apply = (d) => { d.prefs = { ...(d.prefs || { styles: [], note: "" }), ...patch, t: Date.now() }; };
+  if (isDemo()) { apply(demoDoc); renderSettings(); newSuggestion(true); }
+  else sync.change(apply);
 }
 
 // ---------------- DRESSING ----------------
@@ -308,6 +357,17 @@ function renderSettings() {
     (p.id === active ? '<span class="tag">Actif</span>' : '<button type="button" class="btn" data-use="' + p.id + '">Ouvrir</button>') +
     '<button type="button" class="link" data-edit="' + p.id + '">Modifier</button></div>'
   ).join("") : '<p class="empty">Aucun profil sur cet appareil. Ajoute le tien avec le nom de ton dépôt privé et ton jeton.</p>';
+  const chosen = prefs().styles || [];
+  const styleChip = (st) => '<button type="button" class="chip" data-style="' + st.id + '" aria-pressed="' + chosen.includes(st.id) + '">' + esc(st.name) + "</button>";
+  $("style-chips").innerHTML = STYLES.filter((x) => x.kind === "style").map(styleChip).join("");
+  $("designer-chips").innerHTML = STYLES.filter((x) => x.kind === "createur").map(styleChip).join("");
+  $("style-count").textContent = chosen.length + " / 3";
+  $("style-desc").innerHTML = STYLES.filter((x) => chosen.includes(x.id)).map((x) => "<li><strong>" + esc(x.name) + "</strong> : " + esc(x.desc) + "</li>").join("");
+  if (document.activeElement !== $("style-note")) $("style-note").value = prefs().note || "";
+  const k = aiKey();
+  if (document.activeElement !== $("ai-key")) $("ai-key").value = k ? "••••••••" + k.slice(-4) : "";
+  $("btn-ai-del").hidden = !k;
+  $("btn-ai").textContent = aiBusy ? "La styliste réfléchit…" : "Demander à la styliste";
   $("loc-current").textContent = settings.loc ? "Lieu actuel : " + settings.loc.name : "Aucun lieu choisi.";
   $("rest-chips").innerHTML = [1, 2, 3, 5, 7].map((n) => '<button type="button" class="chip" data-r="' + n + '" aria-pressed="' + (settings.restDays === n) + '">' + n + " jour" + (n > 1 ? "s" : "") + "</button>").join("");
   $("version").textContent = "Version " + VERSION;
@@ -358,7 +418,7 @@ function activate(id) {
 let dataTimer = null;
 function renderAfterData() {
   clearTimeout(dataTimer);
-  dataTimer = setTimeout(() => { refreshOutfit(); renderWardrobe(); renderAgenda(); renderControls(); }, 30);
+  dataTimer = setTimeout(() => { refreshOutfit(); renderWardrobe(); renderAgenda(); renderControls(); renderSettings(); }, 30);
 }
 
 function openProfile(p) {
@@ -451,8 +511,8 @@ async function useGeo() {
 function openItem(it) {
   if (isDemo()) { openProfile(null); return; }
   editing = it || null;
-  draft = it ? { ...it, pattern: it.pattern || "uni", rain: it.rain || "normal", occ: (it.occ || []).slice(), seasons: (it.seasons || []).slice() } :
-    { name: "", cat: catFilter !== "tous" ? catFilter : "haut", color: "noir", pattern: "uni", warmth: 2, seasons: defaultSeasons(2), rain: "normal", occ: [context().occ], dirty: false };
+  draft = it ? { ...it, pattern: it.pattern || "uni", rain: it.rain || "normal", occ: (it.occ || []).slice(), seasons: (it.seasons || []).slice(), styles: (it.styles || []).slice(), material: it.material || null } :
+    { name: "", cat: catFilter !== "tous" ? catFilter : "haut", color: "noir", pattern: "uni", warmth: 2, seasons: defaultSeasons(2), rain: "normal", occ: [context().occ], dirty: false, styles: [], material: null };
   draft.newBlob = null; draft.previewUrl = null;
   $("item-title").textContent = it ? "Modifier" : "Nouveau vêtement";
   $("f-name").value = draft.name;
@@ -481,6 +541,8 @@ function renderItemSheet() {
   $("f-cat").innerHTML = chips(CATS, "cat", false, "c");
   $("f-color").innerHTML = Object.entries(COLORS).map(([k, v]) => '<button type="button" class="sw" data-k="' + k + '" style="background:' + v[1] + '" aria-pressed="' + (draft.color === k) + '" title="' + v[0] + '" aria-label="' + v[0] + '"></button>').join("");
   $("f-pattern").innerHTML = chips(PATTERNS, "pattern", false, "p");
+  $("f-style").innerHTML = chips(STYLE_TAGS, "styles", true, "st");
+  $("f-mat").innerHTML = chips(MATERIALS, "material", false, "mat");
   $("f-warm").innerHTML = chips(WARM, "warmth", false, "w");
   $("f-season").innerHTML = chips(SEASONS, "seasons", true, "s");
   $("f-rain").innerHTML = chips(RAIN, "rain", false, "r");
@@ -512,6 +574,7 @@ async function saveItemForm(e) {
     const item = {
       id, name: draft.name, cat: draft.cat, color: draft.color, pattern: draft.pattern, warmth: draft.warmth,
       seasons: draft.seasons, rain: draft.rain, occ: draft.occ, dirty: !!draft.dirty, photo,
+      styles: draft.styles, material: draft.material || null,
       createdAt: editing ? editing.createdAt || Date.now() : Date.now(), updatedAt: Date.now()
     };
     sync.change((d) => {
@@ -573,6 +636,7 @@ function bind() {
 
   on("btn-other", "click", () => newSuggestion(false));
   on("btn-wear", "click", wearCurrent);
+  on("btn-ai", "click", askAi);
   on("btn-like", "click", () => {
     if (!current) return;
     const fb = (data().feedback || {})[current.key];
@@ -621,6 +685,8 @@ function bind() {
   });
   delegate("f-season", "s", (v) => { draft.seasons = draft.seasons.includes(v) ? draft.seasons.filter((x) => x !== v) : draft.seasons.concat(v); renderItemSheet(); });
   delegate("f-rain", "r", (v) => { draft.rain = v; renderItemSheet(); });
+  delegate("f-style", "st", (v) => { draft.styles = draft.styles.includes(v) ? draft.styles.filter((x) => x !== v) : draft.styles.concat(v); renderItemSheet(); });
+  delegate("f-mat", "mat", (v) => { draft.material = draft.material === v ? null : v; renderItemSheet(); });
   delegate("f-occ", "o", (v) => { draft.occ = draft.occ.includes(v) ? draft.occ.filter((x) => x !== v) : draft.occ.concat(v); renderItemSheet(); });
   delegate("f-dirty", "d", (v) => { draft.dirty = v === "true"; renderItemSheet(); });
   on("btn-del", "click", deleteItem);
@@ -692,6 +758,34 @@ function bind() {
       };
     } catch (ex) { $("city-results").innerHTML = '<span class="note">Recherche impossible pour l\'instant. Vérifie ta connexion.</span>'; }
   });
+  const toggleStyle = (id) => {
+    const cur = prefs().styles || [];
+    if (!cur.includes(id) && cur.length >= 3) { toast("3 styles au maximum : retires-en un d'abord."); return; }
+    setPrefs({ styles: cur.includes(id) ? cur.filter((x) => x !== id) : cur.concat(id) });
+  };
+  delegate("style-chips", "style", toggleStyle);
+  delegate("designer-chips", "style", toggleStyle);
+  on("style-note", "change", (e) => setPrefs({ note: e.target.value.trim() }));
+  on("ai-key", "focus", (e) => { if (e.target.value.startsWith("••")) e.target.value = ""; });
+  on("ai-key", "blur", () => setTimeout(renderSettings, 200));
+  on("btn-ai-save", "click", async () => {
+    const st = $("ai-key-status");
+    const v = $("ai-key").value.trim();
+    if (!v || v.startsWith("••")) { st.textContent = "Colle ta clé API, elle commence par sk-ant-."; st.hidden = false; return; }
+    st.textContent = "Vérification auprès d'Anthropic…"; st.hidden = false;
+    try {
+      await testKey(v);
+      LS.set("dressing:aikey", v);
+      st.textContent = "Clé enregistrée sur cet appareil. Le bouton « Demander à la styliste » est prêt.";
+    } catch (e) {
+      st.textContent = e.kind === "auth" ? "Anthropic ne reconnaît pas cette clé. Vérifie qu'elle est complète."
+        : e.kind === "credit" ? "La clé fonctionne mais le compte n'a pas de crédit. Ajoute du crédit dans la console Anthropic."
+        : e.kind === "network" ? "Pas de connexion. Réessaie quand tu as du réseau."
+        : "Anthropic a répondu : " + e.message;
+    }
+    renderSettings();
+  });
+  on("btn-ai-del", "click", () => { LS.del("dressing:aikey"); $("ai-key-status").textContent = "Clé retirée de cet appareil."; $("ai-key-status").hidden = false; renderSettings(); });
   delegate("rest-chips", "r", (v) => { settings.restDays = +v; saveSettings(); renderSettings(); newSuggestion(true); });
 
   document.addEventListener("keydown", (e) => {

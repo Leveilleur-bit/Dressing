@@ -9,7 +9,7 @@ const LS = {
 };
 export { LS };
 
-export const emptyDoc = () => ({ app: "dressing-du-matin", version: 1, items: [], history: [], feedback: {}, agenda: {} });
+export const emptyDoc = () => ({ app: "dressing-du-matin", version: 1, items: [], history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 } });
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -44,7 +44,8 @@ export function merge(local, remote) {
     items: [...items.values()],
     history: [...hist.values()].sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : (b.t || 0) - (a.t || 0))).slice(0, 400),
     feedback: mergeMap(remote.feedback, local.feedback),
-    agenda: mergeMap(remote.agenda, local.agenda)
+    agenda: mergeMap(remote.agenda, local.agenda),
+    prefs: ((local.prefs && local.prefs.t) || 0) > ((remote.prefs && remote.prefs.t) || 0) ? local.prefs : remote.prefs || emptyDoc().prefs
   };
 }
 

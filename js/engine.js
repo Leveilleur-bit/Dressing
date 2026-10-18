@@ -1,5 +1,6 @@
 // Choix de la tenue : on génère des combinaisons et on garde les mieux notées.
 import { COLORS, CATS } from "./catalog.js";
+import { styleScore, STYLES } from "./styles.js";
 
 export function seasonOf(dateStr) {
   const d = new Date(dateStr + "T12:00:00");
@@ -132,13 +133,16 @@ export function suggest(data, ctx, avoidKeys) {
     if (pieces.some((p) => p.cat === "robe") && cold < 5) s -= 1.5;
 
     // goûts appris
+    const st = styleScore(pieces, ctx.styles || [], COLORS);
+    s += st.score;
+
     if (liked.has(key)) s += 3;
     for (let a = 0; a < pieces.length; a++) for (let b = a + 1; b < pieces.length; b++) {
       const x = pieces[a].id, y = pieces[b].id;
       const ps = pairScore.get(x < y ? x + "|" + y : y + "|" + x);
       if (ps) s += Math.max(-4, Math.min(4, ps * 1.2));
     }
-    combos.set(key, { key, pieces, score: s });
+    combos.set(key, { key, pieces, score: s, style: st });
   }
 
   const ranked = [...combos.values()].sort((a, b) => b.score - a.score);
@@ -163,8 +167,8 @@ function explain(c, ctx, info) {
   const oldest = pieces.map((p) => ({ p, d: daysBetween(p.lastWorn, ctx.day) }))
     .sort((a, b) => (b.d ?? 999) - (a.d ?? 999))[0];
   if (oldest) {
-    if (oldest.d === null) out.push(`${oldest.p.name} n'a encore jamais été porté.`);
-    else if (oldest.d >= 10) out.push(`${oldest.p.name} attend depuis ${oldest.d} jours.`);
+    if (oldest.d === null) out.push(`${oldest.p.name} : pas encore porté, c'est l'occasion.`);
+    else if (oldest.d >= 10) out.push(`${oldest.p.name} : pas porté depuis ${oldest.d} jours.`);
   }
 
   const accents = [...new Set(c.pieces.map((p) => p.color).filter((x) => COLORS[x] && !COLORS[x][2]))];
@@ -173,6 +177,11 @@ function explain(c, ctx, info) {
   const motif = c.pieces.find((p) => p.pattern === "motif");
   if (motif) out.push(`${motif.name} porte le seul motif de la tenue.`);
 
+  if (c.style && c.style.reasons.length) out.push(...c.style.reasons);
+  else if (c.style && c.style.score >= 3 && ctx.styles && ctx.styles.length) {
+    const names = STYLES.filter((s) => ctx.styles.includes(s.id)).map((s) => s.name);
+    out.push("Dans l'esprit " + names.join(" / ") + ".");
+  }
   if (info.liked.has(c.key)) out.push("Tu as aimé cette tenue.");
   if (ctx.important) out.push("Jour important dans ton agenda : on reste habillé.");
 

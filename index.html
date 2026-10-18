@@ -70,6 +70,7 @@
         <button class="btn" id="btn-like" type="button" aria-pressed="false">J'aime</button>
         <button class="btn" id="btn-other" type="button">Autre idée</button>
       </div>
+      <button class="btn block" id="btn-ai" type="button">Demander à la styliste</button>
       <button class="btn primary block" id="btn-wear" type="button">Je la porte</button>
       <p class="note" id="outfit-msg" hidden></p>
     </section>
@@ -116,6 +117,28 @@
     <div class="outfit-head"><h2>Profils</h2></div>
     <div class="profiles" id="profiles"></div>
     <button class="btn primary block" type="button" id="btn-new-profile">Ajouter un profil</button>
+
+    <div class="outfit-head" style="margin-top:8px"><h2>Mon style</h2><span class="count" id="style-count"></span></div>
+    <p class="hint">Choisis jusqu'à 3 styles ou créatrices. Les tenues qui leur ressemblent passent devant. Ce choix est propre à chaque profil.</p>
+    <div class="group"><span class="label">Styles</span><div class="chips" id="style-chips"></div></div>
+    <div class="group"><span class="label">Créatrices et maisons</span><div class="chips" id="designer-chips"></div></div>
+    <ul class="why" id="style-desc"></ul>
+    <div class="group">
+      <label class="label" for="style-note">En quelques mots (pour la styliste)</label>
+      <input type="text" id="style-note" maxlength="200" placeholder="ex. j'aime les tenues sobres avec une pièce forte, jamais de rose" autocomplete="off">
+    </div>
+
+    <div class="outfit-head" style="margin-top:8px"><h2>Styliste IA</h2></div>
+    <p class="hint">Le bouton « Demander à la styliste » envoie à Claude la liste écrite de tes vêtements (sans les photos), la météo et tes styles, et reçoit une tenue expliquée. Il faut une clé API Anthropic : environ 1 centime par demande. La clé reste sur cet appareil.</p>
+    <div class="group">
+      <label class="label" for="ai-key">Clé API Anthropic</label>
+      <input type="password" id="ai-key" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div class="actions">
+      <button class="btn" type="button" id="btn-ai-del" hidden>Retirer la clé</button>
+      <button class="btn primary" type="button" id="btn-ai-save">Vérifier et enregistrer</button>
+    </div>
+    <p class="note" id="ai-key-status" hidden></p>
 
     <div class="outfit-head" style="margin-top:8px"><h2>Lieu pour la météo</h2></div>
     <p class="hint" id="loc-current"></p>
@@ -171,6 +194,8 @@
     <div class="group"><span class="label">Catégorie</span><div class="chips" id="f-cat"></div></div>
     <div class="group"><span class="label">Couleur principale</span><div class="swatches" id="f-color"></div></div>
     <div class="group"><span class="label">Motif</span><div class="chips" id="f-pattern"></div></div>
+    <div class="group"><span class="label">Style de la pièce</span><div class="chips" id="f-style"></div></div>
+    <div class="group"><span class="label">Matière</span><div class="chips" id="f-mat"></div></div>
     <div class="group"><span class="label">Épaisseur</span><div class="chips" id="f-warm"></div></div>
     <div class="group"><span class="label">Saisons</span><div class="chips" id="f-season"></div></div>
     <div class="group"><span class="label">Pluie</span><div class="chips" id="f-rain"></div></div>
