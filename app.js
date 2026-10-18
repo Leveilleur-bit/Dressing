@@ -7,7 +7,7 @@ import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
 import { askStylist, testKey, AiError } from "./js/ai.js";
 
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -342,6 +342,7 @@ function openDay(day) {
   $("d-note").value = dayDraft.note || "";
   renderDaySheet();
   $("day-overlay").hidden = false;
+  $("day-form").scrollTop = 0;
 }
 function renderDaySheet() {
   $("d-occ").innerHTML = OCCS.map((o) => '<button type="button" class="chip" data-o="' + o.id + '" aria-pressed="' + (dayDraft.occ === o.id) + '">' + o.label + "</button>").join("");
@@ -430,6 +431,7 @@ function openProfile(p) {
   $("p-err").hidden = true; $("p-status").hidden = true;
   $("btn-p-del").hidden = !p; $("btn-p-del").dataset.confirm = ""; $("btn-p-del").textContent = "Retirer de cet appareil";
   $("profile-overlay").hidden = false;
+  $("profile-form").scrollTop = 0;
 }
 
 async function saveProfile(e) {
@@ -521,7 +523,9 @@ function openItem(it) {
   $("photo-status").textContent = cameraSupported() ? "Photo prise ici : rien n'est gardé dans ton album." : "Choisis une photo, ou ajoute le vêtement sans photo.";
   $("btn-camera").hidden = !cameraSupported();
   renderItemSheet();
+  $("btn-save-next").hidden = !!it;
   $("item-overlay").hidden = false;
+  $("item-form").scrollTop = 0;
 }
 function closeItem() {
   $("item-overlay").hidden = true;
@@ -565,7 +569,11 @@ async function saveItemForm(e) {
   if (!draft.occ.length) return showErr(err, "Choisis au moins une occasion.");
   if (!draft.seasons.length) return showErr(err, "Choisis au moins une saison.");
   err.hidden = true;
-  const btn = $("btn-save"); btn.disabled = true; btn.textContent = "Enregistrement…";
+  const next = !!(e.submitter && e.submitter.id === "btn-save-next");
+  const wasEditing = !!editing;
+  const btn = $("btn-save"), btnNext = $("btn-save-next");
+  const label = next ? btnNext : btn, labelText = label.textContent;
+  btn.disabled = true; btnNext.disabled = true; label.textContent = "Enregistrement…";
   const id = editing ? editing.id : uid();
   const oldPhoto = editing ? editing.photo : null;
   try {
@@ -584,13 +592,14 @@ async function saveItemForm(e) {
     if (oldPhoto && oldPhoto !== photo) sync.deletePhoto(oldPhoto);
     if (catFilter !== "tous" && catFilter !== item.cat) catFilter = item.cat;
     closeItem();
-    toast(editing ? "Modifié." : item.name + " ajouté au dressing.");
+    toast(wasEditing ? "Modifié." : item.name + " ajouté au dressing.");
+    if (next) { const keepCat = item.cat; openItem(null); draft.cat = keepCat; renderItemSheet(); }
   } catch (ex) {
     showErr(err, ex.status === 0 ? "Pas de connexion : la photo n'a pas pu partir. Réessaie quand tu as du réseau."
       : ex.status === 401 || ex.status === 403 ? "GitHub refuse le jeton. Vérifie-le dans Réglages."
       : "L'envoi n'a pas abouti (" + (ex.message || "erreur") + "). Réessaie.");
   }
-  btn.disabled = false; btn.textContent = "Enregistrer";
+  btn.disabled = false; btnNext.disabled = false; label.textContent = labelText;
 }
 
 function deleteItem() {
