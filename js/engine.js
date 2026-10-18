@@ -203,7 +203,8 @@ function explain(c, ctx, info) {
 }
 
 export function missingNote(items, ctx) {
-  const ok = items.filter((i) => !i.deleted && !i.dirty);
+  const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
+  const ok = items.filter((i) => !i.deleted && !i.dirty && (ctx.occ === "maison" || !homeOnly(i)));
   const has = (c) => ok.some((i) => i.cat === c);
   const miss = [];
   if (!has("robe") && !has("haut")) miss.push("un haut");

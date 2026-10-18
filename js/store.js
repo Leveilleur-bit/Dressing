@@ -61,7 +61,7 @@ export class Sync {
     this.sha = cached ? cached.sha : null;
     this.pending = cached ? !!cached.pending : false;
     this.loaded = !!cached;
-    this.timer = null; this.busy = false; this.again = false;
+    this.timer = null; this.busy = false; this.again = false; this.rev = 0;
     this.photoUrls = new Map();
     this.onOnline = () => this.sync();
     window.addEventListener("online", this.onOnline);
@@ -80,6 +80,7 @@ export class Sync {
   /** Applique une modification locale puis enregistre sur GitHub. */
   change(mutator) {
     mutator(this.doc);
+    this.rev++;
     this.pending = true;
     this.persist();
     this.onData(this.doc);
@@ -108,9 +109,11 @@ export class Sync {
           break;
         }
         try {
+          const rev = this.rev;
           this.sha = await this.repo.putJson(FILE, merged, remote.sha, "Mise à jour du dressing");
-          this.doc = merged; this.pending = false;
-          this.persist(); this.onData(this.doc); this.status("ok");
+          if (this.rev === rev) { this.doc = merged; this.pending = false; this.status("ok"); }
+          else { this.doc = merge(this.doc, merged); this.again = true; } // modifié pendant l'envoi : on renverra
+          this.persist(); this.onData(this.doc);
           break;
         } catch (e) {
           if ((e.status === 409 || e.status === 422) && attempt < 3) continue; // modifié ailleurs entre-temps : on refusionne

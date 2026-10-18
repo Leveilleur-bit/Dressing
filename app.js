@@ -7,7 +7,7 @@ import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
 import { askStylist, testKey, AiError } from "./js/ai.js";
 
-const VERSION = "1.2.0";
+const VERSION = "1.2.1";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -229,6 +229,8 @@ function wearCurrent() {
   if (isDemo()) { msg.textContent = "C'est le dressing d'exemple : connecte ton dépôt pour suivre ce que tu portes."; msg.hidden = false; return; }
   const c = context();
   const ids = current.pieces.map((p) => p.id);
+  const already = (data().history || []).some((h) => !h.deleted && h.day === c.day && comboKey(h.items.map((id) => ({ id }))) === current.key);
+  if (already) { toast("Cette tenue est déjà notée pour " + (dayOffset === 0 ? "aujourd'hui." : "demain.")); return; }
   wornKey = current.key;
   sync.change((d) => { d.history.unshift({ id: uid(), day: c.day, items: ids, t: Date.now() }); });
   const worn = current.pieces;
@@ -460,6 +462,7 @@ async function saveProfile(e) {
     return showErr(err, "GitHub a répondu : " + ex.message);
   }
   const list = getProfiles();
+  if (editingProfile && (editingProfile.owner !== parsed.owner || editingProfile.repo !== parsed.repo)) LS.del("dressing:data:" + editingProfile.id);
   const p = editingProfile ? { ...editingProfile, name, ...parsed, token } : { id: uid(), name, ...parsed, token };
   saveProfiles(editingProfile ? list.map((x) => (x.id === p.id ? p : x)) : list.concat(p));
   btn.disabled = false;
@@ -496,6 +499,7 @@ async function loadWeather(force) {
   } catch (e) {
     weatherError = e;
     if (cached && cached.days[0] && cached.days[0].day === dayStr(0)) weather = { 0: cached.days[0], 1: cached.days[1] };
+    else if (!weather[0] || weather[0].day !== dayStr(0)) weather = { 0: null, 1: null };
   }
   renderWeather(); renderControls(); refreshOutfit();
 }
@@ -675,7 +679,8 @@ function bind() {
   delegate("grid", "id", (id) => { const it = liveItems().find((i) => i.id === id); if (it) openItem(it); });
   delegate("laundry-row", "clean", (id) => { setDirty(id, false); toast("Remis dans le dressing."); });
   on("btn-all-clean", "click", () => {
-    sync && sync.change((d) => { for (const it of d.items) if (it.dirty) { it.dirty = false; it.updatedAt = Date.now(); } });
+    if (!sync) return;
+    sync.change((d) => { for (const it of d.items) if (it.dirty) { it.dirty = false; it.updatedAt = Date.now(); } });
     toast("Tout est propre.");
   });
   on("btn-add", "click", () => openItem(null));
@@ -804,8 +809,15 @@ function bind() {
     if (!$("item-overlay").hidden) closeItem();
     $("profile-overlay").hidden = true; $("day-overlay").hidden = true;
   });
+  let shownDay = dayStr(0);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
+    if (dayStr(0) !== shownDay) {
+      shownDay = dayStr(0);
+      dayOffset = new Date().getHours() >= 19 ? 1 : 0;
+      occOverride = {}; mood = ""; current = null;
+      renderAll();
+    }
     if (sync) sync.sync();
     loadWeather(false);
   });
