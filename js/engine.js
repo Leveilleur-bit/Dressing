@@ -1,0 +1,199 @@
+// Choix de la tenue : on génère des combinaisons et on garde les mieux notées.
+import { COLORS, CATS } from "./catalog.js";
+
+export function seasonOf(dateStr) {
+  const d = new Date(dateStr + "T12:00:00");
+  const m = d.getMonth() + 1, day = d.getDate();
+  const md = m * 100 + day;
+  if (md >= 321 && md < 621) return "printemps";
+  if (md >= 621 && md < 923) return "ete";
+  if (md >= 923 && md < 1221) return "automne";
+  return "hiver";
+}
+
+/** Épaisseur visée selon la température ressentie */
+export function warmthFor(feels) {
+  if (feels == null) return 2;
+  if (feels < 9) return 3;
+  if (feels < 19) return 2;
+  return 1;
+}
+
+export function daysBetween(fromIso, toDay) {
+  if (!fromIso) return null;
+  const a = new Date(fromIso.slice(0, 10) + "T12:00:00");
+  const b = new Date(toDay + "T12:00:00");
+  return Math.round((b - a) / 864e5);
+}
+
+export const comboKey = (pieces) => pieces.map((p) => p.id).sort().join("|");
+
+/**
+ * ctx : {day, season, occ, mood, important, restDays,
+ *        w: {morning, afternoon, rain, wind, snow}}  (températures ressenties)
+ * data : {items, feedback}
+ */
+export function suggest(data, ctx, avoidKeys) {
+  const items = data.items.filter((i) => !i.deleted && !i.dirty);
+  const fb = data.feedback || {};
+  const disliked = new Set(Object.keys(fb).filter((k) => fb[k].v === -1));
+  const liked = new Set(Object.keys(fb).filter((k) => fb[k].v === 1));
+
+  // apprentissage par paires : une paire présente dans des tenues aimées / refusées
+  const pairScore = new Map();
+  for (const k of Object.keys(fb)) {
+    if (!fb[k].v) continue;
+    const ids = k.split("|");
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+      const pk = ids[i] < ids[j] ? ids[i] + "|" + ids[j] : ids[j] + "|" + ids[i];
+      pairScore.set(pk, (pairScore.get(pk) || 0) + fb[k].v);
+    }
+  }
+
+  const w = ctx.w;
+  const cold = w.morning;               // ressenti du matin
+  const warm = w.afternoon ?? w.morning; // ressenti de l'après-midi
+  const swing = warm - cold;
+  const layered = swing >= 7;
+  // la base (haut/bas) suit l'après-midi quand il y a un gros écart, la veste couvre le matin
+  const baseTarget = warmthFor(layered ? (cold + warm) / 2 + 2 : (cold + warm) / 2);
+  const needJacket = cold < 15 || w.rain || w.snow;
+  const allowJacket = needJacket || cold < 21 || w.wind >= 35;
+
+  const by = (c) => items.filter((i) => i.cat === c);
+  const tops = by("haut"), bottoms = by("bas"), dresses = by("robe"), jackets = by("veste"), shoes = by("chaussures");
+
+  const bases = [];
+  tops.forEach((t) => bottoms.forEach((b) => bases.push([t, b])));
+  dresses.forEach((d) => bases.push([d]));
+  if (!bases.length) { tops.forEach((t) => bases.push([t])); bottoms.forEach((b) => bases.push([b])); }
+  if (!bases.length) return null;
+
+  const restDays = ctx.restDays ?? 3;
+
+  const itemScore = (it) => {
+    let s = 0;
+    const wm = it.warmth || 2;
+    if (it.cat === "veste") s -= 1.2 * Math.abs(wm - warmthFor(cold));
+    else if (it.cat === "chaussures") {
+      if (w.rain || w.snow || cold < 6) s += wm >= 2 ? 1 : -2;
+      else if (warm > 24) s += wm <= 2 ? 1 : -2;
+    } else s -= 1.8 * Math.abs(wm - baseTarget);
+
+    // saison
+    if (it.seasons && it.seasons.length) s += it.seasons.includes(ctx.season) ? 1 : -4;
+
+    // occasion
+    s += (it.occ || []).includes(ctx.occ) ? 2 : -3.5;
+
+    // pluie
+    if (w.rain || w.snow) {
+      if (it.rain === "fragile") s -= 5;
+      if (it.rain === "impermeable" && (it.cat === "veste" || it.cat === "chaussures")) s += 2.5;
+    }
+
+    // humeur / importance
+    const o = it.occ || [];
+    if (ctx.mood === "confort") { if (o.includes("quotidien") || o.includes("sport")) s += 1.2; if (o.includes("soiree") && !o.includes("quotidien")) s -= 1.2; }
+    if (ctx.mood === "classe" || ctx.important) { if (o.includes("travail") || o.includes("soiree")) s += 1.5; if (o.includes("sport")) s -= 3; }
+
+    // rotation
+    const d = daysBetween(it.lastWorn, ctx.day);
+    if (d !== null && d < restDays) s -= 4 + (restDays - d);
+    else s += Math.min(d === null ? 21 : d, 21) * 0.12;
+    return s;
+  };
+
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const combos = new Map();
+  const tries = Math.min(900, bases.length * Math.max(1, shoes.length) * (jackets.length + 1) * 3);
+  for (let i = 0; i < tries; i++) {
+    const pieces = pick(bases).slice();
+    if (allowJacket && jackets.length && (needJacket || Math.random() < 0.4)) pieces.unshift(pick(jackets));
+    if (shoes.length) pieces.push(pick(shoes));
+    const key = comboKey(pieces);
+    if (combos.has(key) || disliked.has(key)) continue;
+    let s = pieces.reduce((a, p) => a + itemScore(p), 0);
+
+    // couleurs : une couleur vive au plus sur une base neutre
+    const accents = new Set(pieces.map((p) => p.color).filter((c) => COLORS[c] && !COLORS[c][2]));
+    if (accents.size === 1) s += ctx.mood === "couleur" ? 3 : 1;
+    if (accents.size === 0 && ctx.mood === "couleur") s -= 2.5;
+    if (accents.size > 1) s -= 2.5 * (accents.size - 1);
+
+    // motifs : un seul à la fois
+    const motifs = pieces.filter((p) => p.pattern === "motif").length;
+    if (motifs > 1) s -= 4 * (motifs - 1);
+
+    // couches
+    const hasJacket = pieces.some((p) => p.cat === "veste");
+    if (needJacket && !hasJacket) s -= 4;
+    if (w.wind >= 40 && pieces.some((p) => p.cat === "robe" && (p.warmth || 2) === 1)) s -= 2;
+    if (pieces.some((p) => p.cat === "robe") && cold < 5) s -= 1.5;
+
+    // goûts appris
+    if (liked.has(key)) s += 3;
+    for (let a = 0; a < pieces.length; a++) for (let b = a + 1; b < pieces.length; b++) {
+      const x = pieces[a].id, y = pieces[b].id;
+      const ps = pairScore.get(x < y ? x + "|" + y : y + "|" + x);
+      if (ps) s += Math.max(-4, Math.min(4, ps * 1.2));
+    }
+    combos.set(key, { key, pieces, score: s });
+  }
+
+  const ranked = [...combos.values()].sort((a, b) => b.score - a.score);
+  if (!ranked.length) return null;
+  const fresh = ranked.filter((c) => !avoidKeys.includes(c.key));
+  const pool = (fresh.length ? fresh : ranked).slice(0, 3);
+  const chosen = pool[Math.floor(Math.random() * pool.length)];
+  return { ...chosen, reasons: explain(chosen, ctx, { needJacket, layered, liked, pairScore }) };
+}
+
+function explain(c, ctx, info) {
+  const out = [];
+  const w = ctx.w;
+  const jacket = c.pieces.find((p) => p.cat === "veste");
+  if (jacket && info.layered) out.push(`Gros écart dans la journée (${Math.round(w.morning)}° ressentis le matin, ${Math.round(w.afternoon)}° l'après-midi) : ${jacket.name.toLowerCase()} à enlever en route.`);
+  else if (jacket && (w.rain || w.snow) && jacket.rain === "impermeable") out.push(`${jacket.name} : il protège de la ${w.snow ? "neige" : "pluie"}.`);
+  else if (jacket && (w.rain || w.snow)) out.push(`Une veste pour la ${w.snow ? "neige" : "pluie"}.`);
+  else if (jacket && info.needJacket) out.push(`Une couche en plus pour ${Math.round(w.morning)}° ressentis le matin.`);
+  if (w.wind >= 40) out.push(`Vent fort annoncé (${Math.round(w.wind)} km/h).`);
+
+  const pieces = c.pieces.filter((p) => p.cat !== "chaussures");
+  const oldest = pieces.map((p) => ({ p, d: daysBetween(p.lastWorn, ctx.day) }))
+    .sort((a, b) => (b.d ?? 999) - (a.d ?? 999))[0];
+  if (oldest) {
+    if (oldest.d === null) out.push(`${oldest.p.name} n'a encore jamais été porté.`);
+    else if (oldest.d >= 10) out.push(`${oldest.p.name} attend depuis ${oldest.d} jours.`);
+  }
+
+  const accents = [...new Set(c.pieces.map((p) => p.color).filter((x) => COLORS[x] && !COLORS[x][2]))];
+  if (accents.length === 1) out.push(`Une seule couleur vive, ${COLORS[accents[0]][3]}, sur une base neutre.`);
+  else if (accents.length === 0) out.push("Tout en tons neutres, facile à porter.");
+  const motif = c.pieces.find((p) => p.pattern === "motif");
+  if (motif) out.push(`${motif.name} porte le seul motif de la tenue.`);
+
+  if (info.liked.has(c.key)) out.push("Tu as aimé cette tenue.");
+  if (ctx.important) out.push("Jour important dans ton agenda : on reste habillé.");
+
+  const missOcc = c.pieces.filter((p) => !(p.occ || []).includes(ctx.occ));
+  if (missOcc.length) out.push(`Pas idéal pour l'occasion : ${missOcc.map((p) => p.name).join(", ")}.`);
+  const offSeason = c.pieces.filter((p) => p.seasons && p.seasons.length && !p.seasons.includes(ctx.season));
+  if (offSeason.length) out.push(`Hors saison, faute de mieux : ${offSeason.map((p) => p.name).join(", ")}.`);
+  if ((w.rain || w.snow) && c.pieces.some((p) => p.rain === "fragile")) out.push("Attention, une pièce craint la pluie.");
+  return out;
+}
+
+export function missingNote(items, ctx) {
+  const ok = items.filter((i) => !i.deleted && !i.dirty);
+  const has = (c) => ok.some((i) => i.cat === c);
+  const miss = [];
+  if (!has("robe") && !has("haut")) miss.push("un haut");
+  if (!has("robe") && !has("bas")) miss.push("un bas");
+  if (!has("chaussures")) miss.push("des chaussures");
+  if ((ctx.w.morning < 15 || ctx.w.rain) && !has("veste")) miss.push("une veste");
+  if (!miss.length) return "";
+  return "Ajoute " + miss.join(", ") + " pour compléter les tenues" + (items.some((i) => i.dirty && !i.deleted) ? " (les pièces au sale sont mises de côté)." : ".");
+}
+
+export { CATS };

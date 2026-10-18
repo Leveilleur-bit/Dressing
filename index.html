@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Dressing du matin</title>
+<meta name="description" content="Une tenue proposée chaque matin à partir de ton dressing, selon la météo, la saison et ton agenda.">
+<meta name="theme-color" content="#e9ecf0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14171d" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Dressing">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="top-left">
+      <div class="label" id="today-label"></div>
+      <h1 id="title">Qu'est-ce qu'on porte&nbsp;?</h1>
+    </div>
+    <button type="button" class="profile-btn" id="profile-btn" aria-label="Changer de profil">
+      <span class="avatar" id="profile-initial">?</span>
+      <span id="profile-name">Exemple</span>
+    </button>
+  </header>
+
+  <div class="sync" id="sync" hidden></div>
+
+  <!-- ============ AUJOURD'HUI ============ -->
+  <main id="view-today" class="view">
+    <div class="seg" role="group" aria-label="Jour">
+      <button type="button" id="day-today" aria-pressed="true">Aujourd'hui</button>
+      <button type="button" id="day-tomorrow" aria-pressed="false">Demain</button>
+    </div>
+
+    <section class="weather" id="weather" aria-live="polite"></section>
+
+    <div class="group" id="manual-temp-group" hidden>
+      <span class="label">Température</span>
+      <div class="chips" id="temp-chips"></div>
+    </div>
+
+    <div class="group">
+      <span class="label" id="occ-label">Occasion</span>
+      <div class="chips" id="occ-chips"></div>
+    </div>
+
+    <div class="group">
+      <span class="label">Envie du jour</span>
+      <div class="chips" id="mood-chips"></div>
+    </div>
+
+    <section class="outfit" aria-live="polite">
+      <div class="outfit-head">
+        <h2 id="outfit-title">Tenue du jour</h2>
+        <span class="label" id="ctx-label"></span>
+      </div>
+      <div class="lay" id="lay"></div>
+      <ul class="why" id="why"></ul>
+      <div class="actions">
+        <button class="btn" id="btn-dislike" type="button">Pas pour moi</button>
+        <button class="btn" id="btn-like" type="button" aria-pressed="false">J'aime</button>
+        <button class="btn" id="btn-other" type="button">Autre idée</button>
+      </div>
+      <button class="btn primary block" id="btn-wear" type="button">Je la porte</button>
+      <p class="note" id="outfit-msg" hidden></p>
+    </section>
+
+    <div class="banner" id="demo-banner" hidden>
+      <p><strong>Dressing d'exemple.</strong> Ces vêtements servent à te montrer le fonctionnement. Connecte ton dépôt GitHub pour enregistrer les tiens.</p>
+      <button class="btn primary" type="button" id="btn-connect">Connecter mon dressing</button>
+    </div>
+  </main>
+
+  <!-- ============ DRESSING ============ -->
+  <main id="view-wardrobe" class="view" hidden>
+    <div class="outfit-head">
+      <h2>Mon dressing</h2>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="chips" id="cat-filter"></div>
+    <section class="laundry" id="laundry" hidden>
+      <div class="outfit-head">
+        <span class="label">Au sale</span>
+        <button type="button" class="link" id="btn-all-clean">Tout est lavé</button>
+      </div>
+      <div class="laundry-row" id="laundry-row"></div>
+    </section>
+    <button class="btn primary block" type="button" id="btn-add">Ajouter un vêtement</button>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <!-- ============ AGENDA ============ -->
+  <main id="view-agenda" class="view" hidden>
+    <div class="outfit-head">
+      <h2>Agenda</h2>
+    </div>
+    <p class="hint">Note les jours qui comptent. Ce jour-là, l'appli choisit l'occasion toute seule et propose plus habillé si c'est important.</p>
+    <div class="days" id="days"></div>
+    <div class="outfit-head" style="margin-top:8px">
+      <h2>Déjà porté</h2>
+    </div>
+    <div class="history" id="history"></div>
+  </main>
+
+  <!-- ============ RÉGLAGES ============ -->
+  <main id="view-settings" class="view" hidden>
+    <div class="outfit-head"><h2>Profils</h2></div>
+    <div class="profiles" id="profiles"></div>
+    <button class="btn primary block" type="button" id="btn-new-profile">Ajouter un profil</button>
+
+    <div class="outfit-head" style="margin-top:8px"><h2>Lieu pour la météo</h2></div>
+    <p class="hint" id="loc-current"></p>
+    <div class="actions">
+      <button class="btn" type="button" id="btn-geo">Utiliser ma position</button>
+    </div>
+    <form class="city-form" id="city-form">
+      <label class="label" for="city-input">Ou chercher une ville</label>
+      <div class="row">
+        <input type="text" id="city-input" placeholder="ex. Rennes" autocomplete="off">
+        <button class="btn" type="submit" id="btn-city">Chercher</button>
+      </div>
+      <div class="chips" id="city-results"></div>
+    </form>
+
+    <div class="outfit-head" style="margin-top:8px"><h2>Préférences</h2></div>
+    <div class="group">
+      <span class="label">Pièces évitées après avoir été portées</span>
+      <div class="chips" id="rest-chips"></div>
+    </div>
+    <p class="hint">L'appli ne marque rien « au sale » toute seule : un jean se porte plusieurs fois, une chemise non. Tu choisis pièce par pièce.</p>
+    <p class="hint small" id="version"></p>
+  </main>
+</div>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" type="button" id="tab-today" aria-selected="true">Aujourd'hui</button>
+  <button role="tab" type="button" id="tab-wardrobe" aria-selected="false">Dressing</button>
+  <button role="tab" type="button" id="tab-agenda" aria-selected="false">Agenda</button>
+  <button role="tab" type="button" id="tab-settings" aria-selected="false">Réglages</button>
+</nav>
+
+<!-- ============ FICHE VÊTEMENT ============ -->
+<div class="overlay" id="item-overlay" hidden>
+  <form class="sheet" id="item-form" novalidate>
+    <div class="sheet-head">
+      <h2 id="item-title">Nouveau vêtement</h2>
+      <button class="x" type="button" id="item-close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="photo-pick">
+      <div class="thumb" id="f-preview"></div>
+      <div class="group">
+        <button class="btn primary" type="button" id="btn-camera">Prendre une photo</button>
+        <label class="btn" for="f-file">Choisir dans l'album</label>
+        <input class="visually-hidden" type="file" id="f-file" accept="image/*">
+        <span class="note small" id="photo-status">Photo prise ici : rien n'est gardé dans ton album.</span>
+      </div>
+    </div>
+    <div class="group">
+      <label class="label" for="f-name">Nom</label>
+      <input type="text" id="f-name" placeholder="ex. Chemise en lin bleue" maxlength="60" autocomplete="off">
+    </div>
+    <div class="group"><span class="label">Catégorie</span><div class="chips" id="f-cat"></div></div>
+    <div class="group"><span class="label">Couleur principale</span><div class="swatches" id="f-color"></div></div>
+    <div class="group"><span class="label">Motif</span><div class="chips" id="f-pattern"></div></div>
+    <div class="group"><span class="label">Épaisseur</span><div class="chips" id="f-warm"></div></div>
+    <div class="group"><span class="label">Saisons</span><div class="chips" id="f-season"></div></div>
+    <div class="group"><span class="label">Pluie</span><div class="chips" id="f-rain"></div></div>
+    <div class="group"><span class="label">Se porte pour</span><div class="chips" id="f-occ"></div></div>
+    <div class="group"><span class="label">État</span><div class="chips" id="f-dirty"></div></div>
+    <p class="err" id="f-err" hidden></p>
+    <div class="actions">
+      <button class="btn danger" type="button" id="btn-del" hidden>Supprimer</button>
+      <button class="btn primary" type="submit" id="btn-save">Enregistrer</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============ APPAREIL PHOTO ============ -->
+<div class="camera" id="camera" hidden>
+  <video id="cam-video" playsinline autoplay muted></video>
+  <div class="cam-frame" aria-hidden="true"></div>
+  <p class="cam-msg" id="cam-msg" hidden></p>
+  <div class="cam-bar">
+    <button type="button" class="cam-side" id="cam-cancel">Annuler</button>
+    <button type="button" class="cam-shoot" id="cam-shoot" aria-label="Prendre la photo"></button>
+    <button type="button" class="cam-side" id="cam-flip">Retourner</button>
+  </div>
+</div>
+
+<!-- ============ PROFIL ============ -->
+<div class="overlay" id="profile-overlay" hidden>
+  <form class="sheet" id="profile-form" novalidate>
+    <div class="sheet-head">
+      <h2 id="profile-title">Nouveau profil</h2>
+      <button class="x" type="button" id="profile-close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="group">
+      <label class="label" for="p-name">Prénom</label>
+      <input type="text" id="p-name" placeholder="ex. Romain" maxlength="30" autocomplete="off">
+    </div>
+    <div class="group">
+      <label class="label" for="p-repo">Dépôt des données</label>
+      <input type="text" id="p-repo" placeholder="Leveilleur-bit/Dressing-donnees-R" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <span class="note small">Le nom complet du dépôt privé, ou son adresse github.com.</span>
+    </div>
+    <div class="group">
+      <label class="label" for="p-token">Jeton d'accès GitHub</label>
+      <input type="password" id="p-token" placeholder="github_pat_…" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <span class="note small">Un jeton « fine-grained » limité à ce seul dépôt, avec « Contents : Read and write ». Il reste sur cet appareil.</span>
+    </div>
+    <p class="err" id="p-err" hidden></p>
+    <p class="note" id="p-status" hidden></p>
+    <div class="actions">
+      <button class="btn danger" type="button" id="btn-p-del" hidden>Retirer de cet appareil</button>
+      <button class="btn primary" type="submit" id="btn-p-save">Vérifier et enregistrer</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============ AGENDA : JOUR ============ -->
+<div class="overlay" id="day-overlay" hidden>
+  <form class="sheet" id="day-form" novalidate>
+    <div class="sheet-head">
+      <h2 id="day-title">Jour</h2>
+      <button class="x" type="button" id="day-close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="group"><span class="label">Occasion</span><div class="chips" id="d-occ"></div></div>
+    <div class="group"><span class="label">Importance</span><div class="chips" id="d-imp"></div></div>
+    <div class="group">
+      <label class="label" for="d-note">Note</label>
+      <input type="text" id="d-note" placeholder="ex. Entretien, mariage de Julie" maxlength="60" autocomplete="off">
+    </div>
+    <div class="actions">
+      <button class="btn danger" type="button" id="btn-d-clear">Effacer ce jour</button>
+      <button class="btn primary" type="submit">Enregistrer</button>
+    </div>
+  </form>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

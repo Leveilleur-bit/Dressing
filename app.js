@@ -1,0 +1,718 @@
+import { CATS, COLORS, WARM, PATTERNS, RAIN, SEASONS, OCCS, MOODS, MANUAL_TEMPS, GLYPH, defaultSeasons, demoItems } from "./js/catalog.js";
+import { suggest, seasonOf, missingNote, comboKey, daysBetween } from "./js/engine.js";
+import { Sync, LS, uid, getProfiles, saveProfiles, getActiveId, setActiveId } from "./js/store.js";
+import { Repo, parseRepo } from "./js/github.js";
+import { fetchDay, searchCity, locate } from "./js/weather.js";
+import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.js";
+
+const VERSION = "1.0.0";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ---------------- état ----------------
+let sync = null;               // synchronisation du profil actif (null = exemple)
+let doc = null;                // données du dressing affiché
+let demoDoc = { items: demoItems(), history: [], feedback: {}, agenda: {} };
+let dayOffset = new Date().getHours() >= 19 ? 1 : 0;
+let weather = { 0: null, 1: null };
+let weatherError = null;
+let settings = LS.get("dressing:settings", { loc: null, restDays: 3, manual: { temp: null, rain: false } });
+let mood = "";
+let occOverride = {};          // occasion choisie à la main pour un jour donné
+let current = null, seen = [], lastCtxKey = "", wornKey = null;
+let catFilter = "tous";
+let editing = null, draft = null;
+let editingProfile = null;
+let editingDay = null, dayDraft = null;
+
+const saveSettings = () => LS.set("dressing:settings", settings);
+const isDemo = () => !sync;
+const data = () => (sync ? doc : demoDoc);
+
+function dayStr(offset) {
+  const d = new Date(); d.setDate(d.getDate() + offset);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+const fmtDay = (day, opts = { weekday: "long", day: "numeric", month: "long" }) => new Date(day + "T12:00:00").toLocaleDateString("fr-FR", opts);
+
+/** Objets enrichis : dernière fois porté et nombre de fois, d'après l'historique */
+function liveItems() {
+  const d = data();
+  const hist = (d.history || []).filter((h) => !h.deleted);
+  const last = new Map(), count = new Map();
+  for (const h of hist) for (const id of h.items) {
+    count.set(id, (count.get(id) || 0) + 1);
+    if (!last.has(id) || last.get(id) < h.day) last.set(id, h.day);
+  }
+  return (d.items || []).filter((i) => !i.deleted).map((i) => ({
+    ...i,
+    lastWorn: last.has(i.id) ? last.get(i.id) + "T12:00:00" : i.lastWorn || null,
+    wornCount: (count.get(i.id) || 0) + (i.demo && i.lastWorn ? 3 : 0)
+  }));
+}
+
+function wornText(it, ref) {
+  const d = daysBetween(it.lastWorn, ref || dayStr(0));
+  if (d === null) return "Jamais porté";
+  if (d === -1) return "Prévu demain";
+  if (d < -1) return "Prévu";
+  if (d <= 0) return "Porté aujourd'hui";
+  if (d === 1) return "Porté hier";
+  return "Porté il y a " + d + " j";
+}
+
+// ---------------- vignettes ----------------
+function glyph(cat, color) {
+  const hex = (COLORS[color] || COLORS.gris)[1];
+  return '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="' + GLYPH[cat] + '" fill="' + hex + '" stroke="currentColor" stroke-opacity=".55" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+}
+function thumb(it, tag, tagRight, extraAttr = "") {
+  const photoAttr = it.photo && sync ? ' data-photo="' + esc(it.photo) + '" data-alt="' + esc(it.name) + '"' : "";
+  const preview = it.previewUrl ? '<img src="' + esc(it.previewUrl) + '" alt="">' : glyph(it.cat, it.color);
+  return '<div class="thumb"' + photoAttr + extraAttr + ">" + preview +
+    (tag ? '<span class="tag">' + esc(tag) + "</span>" : "") +
+    (tagRight ? '<span class="tag right plain">' + esc(tagRight) + "</span>" : "") + "</div>";
+}
+function hydratePhotos(root) {
+  if (!sync) return;
+  const s = sync;
+  root.querySelectorAll("[data-photo]").forEach((el) => {
+    const path = el.dataset.photo;
+    delete el.dataset.photo;
+    s.photoUrl(path).then((url) => {
+      if (s !== sync || !el.isConnected) return;
+      const svg = el.querySelector("svg"); if (svg) svg.remove();
+      const img = document.createElement("img"); img.src = url; img.alt = el.dataset.alt || "";
+      el.prepend(img);
+    }).catch(() => {});
+  });
+}
+
+// ---------------- toast ----------------
+let toastTimer = null;
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 2800);
+}
+
+// ---------------- contexte du jour ----------------
+function context() {
+  const day = dayStr(dayOffset);
+  const ag = (data().agenda || {})[day];
+  const agenda = ag && !ag.deleted ? ag : null;
+  const occ = occOverride[day] || (agenda && agenda.occ) || (new Date(day + "T12:00:00").getDay() % 6 === 0 ? "quotidien" : "travail");
+  const wx = weather[dayOffset];
+  let w;
+  if (wx) w = { morning: wx.morning.feels, afternoon: wx.afternoon.feels, rain: wx.rain, wind: wx.wind, snow: wx.snow };
+  else {
+    const def = MANUAL_TEMPS.find((t) => t.id === (settings.manual.temp || defaultManual())) || MANUAL_TEMPS[1];
+    w = { morning: def.m, afternoon: def.a, rain: !!settings.manual.rain, wind: 0, snow: false };
+  }
+  return { day, season: seasonOf(day), occ, mood, important: !!(agenda && agenda.important), agenda, restDays: settings.restDays, w, live: !!wx };
+}
+function defaultManual() {
+  const m = new Date().getMonth();
+  return [11, 0, 1].includes(m) ? "froid" : [5, 6, 7].includes(m) ? "chaud" : [4, 8].includes(m) ? "doux" : "frais";
+}
+const ctxKey = (c) => [c.day, c.occ, c.mood, c.important, Math.round(c.w.morning), Math.round(c.w.afternoon), c.w.rain, c.restDays].join("/");
+
+// ---------------- AUJOURD'HUI ----------------
+function renderWeather() {
+  const el = $("weather");
+  const wx = weather[dayOffset];
+  $("manual-temp-group").hidden = !!wx;
+  if (!settings.loc) {
+    el.innerHTML = '<p class="note">Indique ton lieu pour que la météo soit prise en compte automatiquement.</p>' +
+      '<div class="actions"><button class="btn" type="button" id="w-geo">Utiliser ma position</button><button class="btn" type="button" id="w-city">Choisir une ville</button></div>';
+    $("w-geo").onclick = useGeo;
+    $("w-city").onclick = () => { showTab("settings"); setTimeout(() => $("city-input").focus(), 50); };
+    return;
+  }
+  if (!wx) {
+    el.innerHTML = '<div class="w-place"><span class="label">' + esc(settings.loc.name) + "</span></div>" +
+      '<p class="note">' + (weatherError ? "Météo indisponible pour l'instant. Règle la température à la main ci-dessous." : "Chargement de la météo…") + "</p>";
+    return;
+  }
+  const tags = [];
+  if (wx.snow) tags.push("Neige");
+  else if (wx.rain) tags.push("Pluie " + wx.rainProb + " %");
+  else if (wx.rainProb >= 25) tags.push("Risque de pluie " + wx.rainProb + " %");
+  if (wx.wind >= 35) tags.push("Vent " + wx.wind + " km/h");
+  if (wx.afternoon.feels - wx.morning.feels >= 7) tags.push("Gros écart dans la journée");
+  el.innerHTML =
+    '<div class="w-place"><span class="label">' + esc(settings.loc.name) + " · " + esc(wx.sky) + '</span><button type="button" class="link" id="w-refresh">Actualiser</button></div>' +
+    '<div class="w-row">' +
+      '<div class="w-slot"><span class="label">Matin · 8 h</span><span class="w-temp">' + Math.round(wx.morning.temp) + "°</span><span class=\"w-sub\">ressenti " + Math.round(wx.morning.feels) + "°</span></div>" +
+      '<div class="w-sep"></div>' +
+      '<div class="w-slot"><span class="label">Après-midi · 15 h</span><span class="w-temp">' + Math.round(wx.afternoon.temp) + "°</span><span class=\"w-sub\">ressenti " + Math.round(wx.afternoon.feels) + "°</span></div>" +
+    "</div>" +
+    (tags.length ? '<div class="w-tags">' + tags.map((t) => '<span class="tag">' + esc(t) + "</span>").join("") + "</div>" : "");
+  $("w-refresh").onclick = () => loadWeather(true);
+}
+
+function renderControls() {
+  const c = context();
+  $("temp-chips").innerHTML = MANUAL_TEMPS.map((t) => {
+    const on = t.toggle ? !!settings.manual.rain : (settings.manual.temp || defaultManual()) === t.id;
+    return '<button type="button" class="chip" id="temp-' + t.id + '" data-t="' + t.id + '" aria-pressed="' + on + '">' + t.label + "<small>" + t.range + "</small></button>";
+  }).join("");
+  $("occ-label").textContent = c.agenda && !occOverride[c.day] ? "Occasion · d'après ton agenda" + (c.agenda.note ? " : " + c.agenda.note : "") : "Occasion";
+  $("occ-chips").innerHTML = OCCS.map((o) => '<button type="button" class="chip" id="occ-' + o.id + '" data-o="' + o.id + '" aria-pressed="' + (c.occ === o.id) + '">' + o.label + "</button>").join("");
+  $("mood-chips").innerHTML = MOODS.map((m) => '<button type="button" class="chip" id="mood-' + (m.id || "aucune") + '" data-m="' + m.id + '" aria-pressed="' + (mood === m.id) + '">' + m.label + "</button>").join("");
+  $("outfit-title").textContent = dayOffset === 0 ? "Tenue du jour" : "Tenue de demain";
+  const season = SEASONS.find((s) => s.id === c.season).label;
+  $("ctx-label").textContent = season + (c.important ? " · important" : "");
+  $("day-today").setAttribute("aria-pressed", dayOffset === 0);
+  $("day-tomorrow").setAttribute("aria-pressed", dayOffset === 1);
+}
+
+function renderOutfit() {
+  const lay = $("lay"), why = $("why");
+  const c = context();
+  if (!current) {
+    lay.innerHTML = "";
+    const note = missingNote(liveItems(), c);
+    why.innerHTML = "<li>" + esc(note || "Pas assez de vêtements pour composer une tenue.") + "</li>";
+    ["btn-wear", "btn-other", "btn-like", "btn-dislike"].forEach((id) => ($(id).disabled = true));
+    return;
+  }
+  ["btn-wear", "btn-other", "btn-like", "btn-dislike"].forEach((id) => ($(id).disabled = false));
+  const order = { veste: 0, haut: 1, robe: 1, bas: 2, chaussures: 3 };
+  const pieces = current.pieces.slice().sort((a, b) => order[a.cat] - order[b.cat]);
+  const odd = pieces.length % 2 === 1;
+  lay.innerHTML = pieces.map((p, i) => {
+    const wide = odd && i === pieces.length - 1;
+    return '<div class="piece' + (wide ? " wide" : "") + '">' + thumb(p, CATS.find((x) => x.id === p.cat).label) +
+      '<span class="piece-name">' + esc(p.name) + '</span><span class="piece-meta">' + wornText(p) + "</span></div>";
+  }).join("");
+  hydratePhotos(lay);
+  const lines = current.reasons.slice();
+  const note = missingNote(liveItems(), c);
+  if (note) lines.push(note);
+  why.innerHTML = lines.map((l) => "<li>" + esc(l) + "</li>").join("");
+  const fb = (data().feedback || {})[current.key];
+  $("btn-like").setAttribute("aria-pressed", !!(fb && fb.v === 1));
+}
+
+function newSuggestion(reset) {
+  const c = context();
+  const k = ctxKey(c);
+  if (reset || k !== lastCtxKey) seen = [];
+  lastCtxKey = k;
+  wornKey = null; $("outfit-msg").hidden = true;
+  const items = liveItems();
+  current = suggest({ items, feedback: data().feedback }, c, seen);
+  if (current) { seen.push(current.key); if (seen.length > 10) seen.shift(); }
+  renderOutfit();
+}
+
+/** Garde la tenue affichée si ses pièces existent toujours, sinon en propose une autre. */
+function refreshOutfit() {
+  if (!current || ctxKey(context()) !== lastCtxKey) return newSuggestion(true);
+  const map = new Map(liveItems().map((i) => [i.id, i]));
+  if (current.pieces.every((p) => map.has(p.id) && (!map.get(p.id).dirty || current.key === wornKey))) {
+    current = { ...current, pieces: current.pieces.map((p) => map.get(p.id)) };
+    renderOutfit();
+  } else newSuggestion(false);
+}
+
+function wearCurrent() {
+  if (!current) return;
+  const msg = $("outfit-msg");
+  if (isDemo()) { msg.textContent = "C'est le dressing d'exemple : connecte ton dépôt pour suivre ce que tu portes."; msg.hidden = false; return; }
+  const c = context();
+  const ids = current.pieces.map((p) => p.id);
+  wornKey = current.key;
+  sync.change((d) => { d.history.unshift({ id: uid(), day: c.day, items: ids, t: Date.now() }); });
+  const worn = current.pieces;
+  msg.innerHTML = "Noté pour " + (dayOffset === 0 ? "aujourd'hui" : "demain") + ". Ce soir, tu mets quelque chose au sale ?" +
+    '<span class="chips" style="margin-top:8px">' + worn.map((p) => '<button type="button" class="chip" data-dirty="' + esc(p.id) + '" aria-pressed="false">' + esc(p.name) + "</button>").join("") + "</span>";
+  msg.hidden = false;
+}
+
+// ---------------- DRESSING ----------------
+function renderWardrobe() {
+  const all = liveItems();
+  $("count").textContent = isDemo() ? "exemple" : all.length + " pièce" + (all.length > 1 ? "s" : "");
+  $("cat-filter").innerHTML = [{ id: "tous", label: "Tout" }].concat(CATS).map((c) => {
+    const n = c.id === "tous" ? all.length : all.filter((i) => i.cat === c.id).length;
+    return '<button type="button" class="chip" id="filter-' + c.id + '" data-f="' + c.id + '" aria-pressed="' + (catFilter === c.id) + '">' + c.label + "<small>" + n + "</small></button>";
+  }).join("");
+  const dirty = all.filter((i) => i.dirty);
+  $("laundry").hidden = !dirty.length;
+  $("laundry-row").innerHTML = dirty.map((it) => '<button type="button" class="laundry-item" data-clean="' + esc(it.id) + '">' + thumb(it) +
+    '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">Lavé</span></button>').join("");
+  const list = all.filter((i) => catFilter === "tous" || i.cat === catFilter)
+    .sort((a, b) => CATS.findIndex((c) => c.id === a.cat) - CATS.findIndex((c) => c.id === b.cat) || a.name.localeCompare(b.name, "fr"));
+  $("grid").innerHTML = list.length ? list.map((it) =>
+    '<button type="button" class="card' + (it.dirty ? " is-dirty" : "") + '" data-id="' + esc(it.id) + '"' + (it.demo ? " disabled" : "") + ">" +
+    thumb(it, it.demo ? "Exemple" : it.dirty ? "Au sale" : "") +
+    '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">' + wornText(it) + (it.wornCount ? " · " + it.wornCount + " fois" : "") + "</span></button>"
+  ).join("") : '<p class="empty">' + (all.length ? "Rien dans cette catégorie pour l'instant." : "Ton dressing est vide. Ajoute ton premier vêtement : une photo, un nom, et c'est parti.") + "</p>";
+  hydratePhotos($("view-wardrobe"));
+}
+
+function setDirty(id, value) {
+  if (isDemo()) return;
+  sync.change((d) => {
+    const it = d.items.find((i) => i.id === id);
+    if (it) { it.dirty = value; it.updatedAt = Date.now(); }
+  });
+}
+
+// ---------------- AGENDA ----------------
+function renderAgenda() {
+  const ag = data().agenda || {};
+  const rows = [];
+  for (let i = 0; i < 14; i++) {
+    const day = dayStr(i);
+    const e = ag[day] && !ag[day].deleted ? ag[day] : null;
+    const label = i === 0 ? "Auj." : i === 1 ? "Demain" : fmtDay(day, { weekday: "short", day: "numeric" });
+    const what = e ? OCCS.find((o) => o.id === e.occ).label + (e.note ? " · " + e.note : "") : "Rien de prévu";
+    rows.push('<button type="button" class="day' + (i === 0 ? " is-today" : "") + '" data-day="' + day + '"><span class="day-date">' + esc(label) +
+      '</span><span class="day-what' + (e ? "" : " none") + '">' + esc(what) + "</span>" + (e && e.important ? '<span class="tag">Important</span>' : "<span></span>") + "</button>");
+  }
+  $("days").innerHTML = rows.join("");
+
+  const byId = new Map((data().items || []).map((i) => [i.id, i]));
+  const hist = (data().history || []).filter((h) => !h.deleted).slice(0, 20);
+  $("history").innerHTML = hist.length ? hist.map((h) =>
+    '<div class="h-entry"><div class="outfit-head"><span class="label">' + esc(fmtDay(h.day, { weekday: "long", day: "numeric", month: "short" })) +
+    '</span><button type="button" class="link" data-unwear="' + esc(h.id) + '">Retirer</button></div><div class="h-thumbs">' +
+    h.items.map((id) => byId.get(id)).filter((i) => i && !i.deleted).map((i) => thumb(i, "", "", ' title="' + esc(i.name) + '"')).join("") + "</div></div>"
+  ).join("") : '<p class="empty">Les tenues que tu portes apparaîtront ici quand tu appuies sur « Je la porte ».</p>';
+  hydratePhotos($("history"));
+}
+
+function openDay(day) {
+  if (isDemo()) { toast("Connecte ton dressing pour utiliser l'agenda."); return; }
+  editingDay = day;
+  const e = (data().agenda || {})[day];
+  dayDraft = e && !e.deleted ? { ...e } : { occ: "travail", important: false, note: "" };
+  $("day-title").textContent = fmtDay(day);
+  $("d-note").value = dayDraft.note || "";
+  renderDaySheet();
+  $("day-overlay").hidden = false;
+}
+function renderDaySheet() {
+  $("d-occ").innerHTML = OCCS.map((o) => '<button type="button" class="chip" data-o="' + o.id + '" aria-pressed="' + (dayDraft.occ === o.id) + '">' + o.label + "</button>").join("");
+  $("d-imp").innerHTML = [[false, "Normal"], [true, "Important"]].map(([v, l]) => '<button type="button" class="chip" data-i="' + v + '" aria-pressed="' + (dayDraft.important === v) + '">' + l + "</button>").join("");
+}
+
+// ---------------- RÉGLAGES ----------------
+function renderSettings() {
+  const profiles = getProfiles(), active = getActiveId();
+  $("profiles").innerHTML = profiles.length ? profiles.map((p) =>
+    '<div class="profile' + (p.id === active ? " active" : "") + '"><span class="avatar">' + esc((p.name || "?")[0].toUpperCase()) + '</span><div class="grow"><strong>' + esc(p.name) +
+    '</strong><span class="repo">' + esc(p.owner + "/" + p.repo) + "</span></div>" +
+    (p.id === active ? '<span class="tag">Actif</span>' : '<button type="button" class="btn" data-use="' + p.id + '">Ouvrir</button>') +
+    '<button type="button" class="link" data-edit="' + p.id + '">Modifier</button></div>'
+  ).join("") : '<p class="empty">Aucun profil sur cet appareil. Ajoute le tien avec le nom de ton dépôt privé et ton jeton.</p>';
+  $("loc-current").textContent = settings.loc ? "Lieu actuel : " + settings.loc.name : "Aucun lieu choisi.";
+  $("rest-chips").innerHTML = [1, 2, 3, 5, 7].map((n) => '<button type="button" class="chip" data-r="' + n + '" aria-pressed="' + (settings.restDays === n) + '">' + n + " jour" + (n > 1 ? "s" : "") + "</button>").join("");
+  $("version").textContent = "Version " + VERSION;
+}
+
+function renderHeader() {
+  const p = getProfiles().find((x) => x.id === getActiveId());
+  $("profile-name").textContent = p ? p.name : "Exemple";
+  $("profile-initial").textContent = p ? (p.name || "?")[0].toUpperCase() : "?";
+  $("today-label").textContent = fmtDay(dayStr(0));
+  $("demo-banner").hidden = !isDemo();
+}
+
+function renderAll() {
+  renderHeader(); renderWeather(); renderControls(); refreshOutfit();
+  renderWardrobe(); renderAgenda(); renderSettings();
+}
+
+// ---------------- synchro : affichage de l'état ----------------
+function onStatus(state, msg) {
+  const el = $("sync");
+  el.classList.toggle("bad", state === "auth" || state === "notfound" || state === "error");
+  const text = {
+    ok: "", saving: "Enregistrement…",
+    offline: "Hors connexion. Tes changements sont gardés sur ce téléphone et partiront dès que le réseau revient.",
+    auth: "GitHub refuse le jeton. Il a peut-être expiré : crée-en un nouveau et mets-le dans Réglages.",
+    notfound: "Dépôt introuvable avec ce jeton. Vérifie son nom dans Réglages et que le jeton y a accès.",
+    error: "L'enregistrement sur GitHub n'a pas abouti" + (msg ? " (" + msg + ")" : "") + ". Nouvel essai à la prochaine modification."
+  }[state];
+  el.textContent = text || "";
+  el.hidden = !text;
+}
+
+// ---------------- profils ----------------
+function activate(id) {
+  if (sync) sync.destroy();
+  sync = null; doc = null;
+  const p = getProfiles().find((x) => x.id === id);
+  setActiveId(p ? p.id : null);
+  current = null; seen = [];
+  if (p) {
+    sync = new Sync(p, { onData: (d) => { doc = d; renderAfterData(); }, onStatus });
+    doc = sync.doc;
+    sync.sync();
+  } else onStatus("ok");
+  renderAll();
+}
+let dataTimer = null;
+function renderAfterData() {
+  clearTimeout(dataTimer);
+  dataTimer = setTimeout(() => { refreshOutfit(); renderWardrobe(); renderAgenda(); renderControls(); }, 30);
+}
+
+function openProfile(p) {
+  editingProfile = p || null;
+  $("profile-title").textContent = p ? "Modifier le profil" : "Nouveau profil";
+  $("p-name").value = p ? p.name : "";
+  $("p-repo").value = p ? p.owner + "/" + p.repo : "";
+  $("p-token").value = p ? p.token : "";
+  $("p-err").hidden = true; $("p-status").hidden = true;
+  $("btn-p-del").hidden = !p; $("btn-p-del").dataset.confirm = ""; $("btn-p-del").textContent = "Retirer de cet appareil";
+  $("profile-overlay").hidden = false;
+}
+
+async function saveProfile(e) {
+  e.preventDefault();
+  const err = $("p-err"), st = $("p-status");
+  err.hidden = true;
+  const name = $("p-name").value.trim();
+  const parsed = parseRepo($("p-repo").value);
+  const token = $("p-token").value.trim();
+  if (!name) return showErr(err, "Indique un prénom pour reconnaître ce dressing.");
+  if (!parsed) return showErr(err, "Le dépôt doit être de la forme propriétaire/nom, par exemple Leveilleur-bit/Dressing-donnees-R.");
+  if (!token) return showErr(err, "Colle ton jeton d'accès GitHub.");
+  const btn = $("btn-p-save"); btn.disabled = true;
+  st.textContent = "Vérification auprès de GitHub…"; st.hidden = false;
+  try {
+    const info = await new Repo({ ...parsed, token }).check();
+    if (!info.private) { st.hidden = true; btn.disabled = false; return showErr(err, "Ce dépôt est public : tes photos seraient visibles par tout le monde. Passe-le en privé dans ses réglages GitHub, puis réessaie."); }
+    if (!info.canWrite) { st.hidden = true; btn.disabled = false; return showErr(err, "Ce jeton peut lire le dépôt mais pas y écrire. Donne-lui la permission « Contents : Read and write »."); }
+  } catch (ex) {
+    st.hidden = true; btn.disabled = false;
+    if (ex.status === 401) return showErr(err, "GitHub ne reconnaît pas ce jeton. Vérifie qu'il est complet et qu'il n'a pas expiré.");
+    if (ex.status === 404 || ex.status === 403) return showErr(err, "Dépôt introuvable avec ce jeton. Vérifie le nom du dépôt et que le jeton y a bien accès.");
+    if (ex.status === 0) return showErr(err, "Pas de connexion. Réessaie quand tu as du réseau.");
+    return showErr(err, "GitHub a répondu : " + ex.message);
+  }
+  const list = getProfiles();
+  const p = editingProfile ? { ...editingProfile, name, ...parsed, token } : { id: uid(), name, ...parsed, token };
+  saveProfiles(editingProfile ? list.map((x) => (x.id === p.id ? p : x)) : list.concat(p));
+  btn.disabled = false;
+  $("profile-overlay").hidden = true;
+  activate(p.id);
+  toast("Dressing de " + name + " connecté.");
+}
+function showErr(el, msg) { el.textContent = msg; el.hidden = false; }
+
+function removeProfile() {
+  const b = $("btn-p-del");
+  if (!b.dataset.confirm) { b.dataset.confirm = "1"; b.textContent = "Confirmer : retirer d'ici"; return; }
+  const p = editingProfile; if (!p) return;
+  saveProfiles(getProfiles().filter((x) => x.id !== p.id));
+  LS.del("dressing:data:" + p.id);
+  $("profile-overlay").hidden = true;
+  if (getActiveId() === p.id) { const rest = getProfiles(); activate(rest[0] ? rest[0].id : null); }
+  else renderSettings();
+  toast("Profil retiré de cet appareil. Ses données restent sur GitHub.");
+}
+
+// ---------------- météo ----------------
+async function loadWeather(force) {
+  if (!settings.loc) { renderWeather(); return; }
+  const key = "dressing:wx:" + settings.loc.lat + "," + settings.loc.lon;
+  const cached = LS.get(key, null);
+  const fresh = cached && Date.now() - cached.at < 45 * 60e3 && cached.days[0] && cached.days[0].day === dayStr(0);
+  if (fresh && !force) { weather = { 0: cached.days[0], 1: cached.days[1] }; weatherError = null; renderWeather(); renderControls(); refreshOutfit(); return; }
+  if (!weather[0]) renderWeather();
+  try {
+    const [d0, d1] = await Promise.all([fetchDay(settings.loc.lat, settings.loc.lon, 0), fetchDay(settings.loc.lat, settings.loc.lon, 1)]);
+    weather = { 0: d0, 1: d1 }; weatherError = null;
+    LS.set(key, { at: Date.now(), days: [d0, d1] });
+  } catch (e) {
+    weatherError = e;
+    if (cached && cached.days[0] && cached.days[0].day === dayStr(0)) weather = { 0: cached.days[0], 1: cached.days[1] };
+  }
+  renderWeather(); renderControls(); refreshOutfit();
+}
+
+async function useGeo() {
+  toast("Recherche de ta position…");
+  try {
+    const p = await locate();
+    settings.loc = { ...p, name: "Ma position" };
+    saveSettings(); renderSettings(); weather = { 0: null, 1: null }; loadWeather(true);
+  } catch (e) {
+    toast(e && e.code === 1 ? "Position refusée. Choisis une ville dans Réglages." : "Position introuvable. Choisis une ville dans Réglages.");
+  }
+}
+
+// ---------------- fiche vêtement ----------------
+function openItem(it) {
+  if (isDemo()) { openProfile(null); return; }
+  editing = it || null;
+  draft = it ? { ...it, pattern: it.pattern || "uni", rain: it.rain || "normal", occ: (it.occ || []).slice(), seasons: (it.seasons || []).slice() } :
+    { name: "", cat: catFilter !== "tous" ? catFilter : "haut", color: "noir", pattern: "uni", warmth: 2, seasons: defaultSeasons(2), rain: "normal", occ: [context().occ], dirty: false };
+  draft.newBlob = null; draft.previewUrl = null;
+  $("item-title").textContent = it ? "Modifier" : "Nouveau vêtement";
+  $("f-name").value = draft.name;
+  $("btn-del").hidden = !it; $("btn-del").dataset.confirm = ""; $("btn-del").textContent = "Supprimer";
+  $("f-err").hidden = true;
+  $("photo-status").textContent = cameraSupported() ? "Photo prise ici : rien n'est gardé dans ton album." : "Choisis une photo, ou ajoute le vêtement sans photo.";
+  $("btn-camera").hidden = !cameraSupported();
+  renderItemSheet();
+  $("item-overlay").hidden = false;
+}
+function closeItem() {
+  $("item-overlay").hidden = true;
+  if (draft && draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+  editing = null; draft = null;
+}
+function renderItemSheet() {
+  const old = $("f-preview");
+  const tmp = document.createElement("div");
+  tmp.innerHTML = thumb({ ...draft, photo: draft.previewUrl ? null : draft.photo }, "", "", ' id="f-preview"');
+  old.replaceWith(tmp.firstChild);
+  hydratePhotos($("item-form"));
+  const chips = (list, key, multi, attr) => list.map((o) => {
+    const on = multi ? draft[key].includes(o.id) : draft[key] === o.id;
+    return '<button type="button" class="chip" data-' + attr + '="' + o.id + '" aria-pressed="' + on + '">' + o.label + "</button>";
+  }).join("");
+  $("f-cat").innerHTML = chips(CATS, "cat", false, "c");
+  $("f-color").innerHTML = Object.entries(COLORS).map(([k, v]) => '<button type="button" class="sw" data-k="' + k + '" style="background:' + v[1] + '" aria-pressed="' + (draft.color === k) + '" title="' + v[0] + '" aria-label="' + v[0] + '"></button>').join("");
+  $("f-pattern").innerHTML = chips(PATTERNS, "pattern", false, "p");
+  $("f-warm").innerHTML = chips(WARM, "warmth", false, "w");
+  $("f-season").innerHTML = chips(SEASONS, "seasons", true, "s");
+  $("f-rain").innerHTML = chips(RAIN, "rain", false, "r");
+  $("f-occ").innerHTML = chips(OCCS, "occ", true, "o");
+  $("f-dirty").innerHTML = [[false, "Propre"], [true, "Au sale"]].map(([v, l]) => '<button type="button" class="chip" data-d="' + v + '" aria-pressed="' + (!!draft.dirty === v) + '">' + l + "</button>").join("");
+}
+function setDraftPhoto(blob) {
+  draft.newBlob = blob;
+  if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+  draft.previewUrl = URL.createObjectURL(blob);
+  $("photo-status").textContent = "Photo prête. Elle part dans ton dépôt privé à l'enregistrement.";
+  renderItemSheet();
+}
+
+async function saveItemForm(e) {
+  e.preventDefault();
+  const err = $("f-err");
+  draft.name = $("f-name").value.trim();
+  if (!draft.name) { showErr(err, "Donne un nom au vêtement, par exemple « Jean noir »."); $("f-name").focus(); return; }
+  if (!draft.occ.length) return showErr(err, "Choisis au moins une occasion.");
+  if (!draft.seasons.length) return showErr(err, "Choisis au moins une saison.");
+  err.hidden = true;
+  const btn = $("btn-save"); btn.disabled = true; btn.textContent = "Enregistrement…";
+  const id = editing ? editing.id : uid();
+  const oldPhoto = editing ? editing.photo : null;
+  try {
+    let photo = draft.photo || null;
+    if (draft.newBlob) photo = await sync.uploadPhoto(draft.newBlob, id);
+    const item = {
+      id, name: draft.name, cat: draft.cat, color: draft.color, pattern: draft.pattern, warmth: draft.warmth,
+      seasons: draft.seasons, rain: draft.rain, occ: draft.occ, dirty: !!draft.dirty, photo,
+      createdAt: editing ? editing.createdAt || Date.now() : Date.now(), updatedAt: Date.now()
+    };
+    sync.change((d) => {
+      const i = d.items.findIndex((x) => x.id === id);
+      if (i >= 0) d.items[i] = item; else d.items.push(item);
+    });
+    if (oldPhoto && oldPhoto !== photo) sync.deletePhoto(oldPhoto);
+    if (catFilter !== "tous" && catFilter !== item.cat) catFilter = item.cat;
+    closeItem();
+    toast(editing ? "Modifié." : item.name + " ajouté au dressing.");
+  } catch (ex) {
+    showErr(err, ex.status === 0 ? "Pas de connexion : la photo n'a pas pu partir. Réessaie quand tu as du réseau."
+      : ex.status === 401 || ex.status === 403 ? "GitHub refuse le jeton. Vérifie-le dans Réglages."
+      : "L'envoi n'a pas abouti (" + (ex.message || "erreur") + "). Réessaie.");
+  }
+  btn.disabled = false; btn.textContent = "Enregistrer";
+}
+
+function deleteItem() {
+  const b = $("btn-del");
+  if (!b.dataset.confirm) { b.dataset.confirm = "1"; b.textContent = "Confirmer la suppression"; return; }
+  const it = editing; if (!it) return;
+  sync.change((d) => {
+    const i = d.items.findIndex((x) => x.id === it.id);
+    if (i >= 0) d.items[i] = { id: it.id, deleted: true, updatedAt: Date.now() };
+  });
+  if (it.photo) sync.deletePhoto(it.photo);
+  closeItem();
+  toast(it.name + " supprimé.");
+}
+
+// ---------------- onglets ----------------
+function showTab(which) {
+  for (const t of ["today", "wardrobe", "agenda", "settings"]) {
+    $("view-" + t).hidden = t !== which;
+    $("tab-" + t).setAttribute("aria-selected", t === which);
+  }
+  window.scrollTo(0, 0);
+}
+
+// ---------------- événements ----------------
+function on(id, ev, fn) { $(id).addEventListener(ev, fn); }
+function delegate(id, attr, fn) {
+  on(id, "click", (e) => { const b = e.target.closest("[data-" + attr + "]"); if (b && !b.disabled) fn(b.dataset[attr.replace(/-([a-z])/g, (m, c) => c.toUpperCase())], b, e); });
+}
+
+function bind() {
+  for (const t of ["today", "wardrobe", "agenda", "settings"]) on("tab-" + t, "click", () => showTab(t));
+  on("profile-btn", "click", () => showTab("settings"));
+  on("day-today", "click", () => { dayOffset = 0; renderWeather(); renderControls(); newSuggestion(true); });
+  on("day-tomorrow", "click", () => { dayOffset = 1; renderWeather(); renderControls(); newSuggestion(true); });
+
+  delegate("temp-chips", "t", (t) => {
+    if (t === "pluie") settings.manual.rain = !settings.manual.rain; else settings.manual.temp = t;
+    saveSettings(); renderControls(); newSuggestion(true);
+  });
+  delegate("occ-chips", "o", (o) => { occOverride[dayStr(dayOffset)] = o; renderControls(); newSuggestion(true); });
+  delegate("mood-chips", "m", (m) => { mood = m; renderControls(); newSuggestion(true); });
+
+  on("btn-other", "click", () => newSuggestion(false));
+  on("btn-wear", "click", wearCurrent);
+  on("btn-like", "click", () => {
+    if (!current) return;
+    const fb = (data().feedback || {})[current.key];
+    const v = fb && fb.v === 1 ? 0 : 1;
+    const apply = (d) => { d.feedback = d.feedback || {}; d.feedback[current.key] = { v, t: Date.now() }; };
+    if (isDemo()) { apply(demoDoc); renderOutfit(); } else sync.change(apply);
+    toast(v ? "Noté : l'appli te proposera plus souvent ce genre de tenue." : "Retiré de tes tenues aimées.");
+  });
+  on("btn-dislike", "click", () => {
+    if (!current) return;
+    const key = current.key;
+    const apply = (d) => { d.feedback = d.feedback || {}; d.feedback[key] = { v: -1, t: Date.now() }; };
+    if (isDemo()) apply(demoDoc); else sync.change(apply);
+    toast("Noté : cette tenue ne te sera plus proposée.");
+    newSuggestion(false);
+  });
+  delegate("outfit-msg", "dirty", (id, b) => {
+    const val = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", val);
+    setDirty(id, val);
+  });
+  on("btn-connect", "click", () => openProfile(null));
+
+  delegate("cat-filter", "f", (f) => { catFilter = f; renderWardrobe(); });
+  delegate("grid", "id", (id) => { const it = liveItems().find((i) => i.id === id); if (it) openItem(it); });
+  delegate("laundry-row", "clean", (id) => { setDirty(id, false); toast("Remis dans le dressing."); });
+  on("btn-all-clean", "click", () => {
+    sync && sync.change((d) => { for (const it of d.items) if (it.dirty) { it.dirty = false; it.updatedAt = Date.now(); } });
+    toast("Tout est propre.");
+  });
+  on("btn-add", "click", () => openItem(null));
+
+  // fiche vêtement
+  on("item-form", "submit", saveItemForm);
+  on("item-close", "click", closeItem);
+  on("item-overlay", "click", (e) => { if (e.target === $("item-overlay")) closeItem(); });
+  on("f-name", "input", (e) => { if (draft) draft.name = e.target.value; });
+  delegate("f-cat", "c", (v) => { draft.cat = v; renderItemSheet(); });
+  delegate("f-color", "k", (v) => { draft.color = v; renderItemSheet(); });
+  delegate("f-pattern", "p", (v) => { draft.pattern = v; renderItemSheet(); });
+  delegate("f-warm", "w", (v) => {
+    const before = defaultSeasons(draft.warmth).join();
+    draft.warmth = +v;
+    if (draft.seasons.join() === before) draft.seasons = defaultSeasons(draft.warmth); // suit l'épaisseur tant qu'on n'a pas touché aux saisons
+    renderItemSheet();
+  });
+  delegate("f-season", "s", (v) => { draft.seasons = draft.seasons.includes(v) ? draft.seasons.filter((x) => x !== v) : draft.seasons.concat(v); renderItemSheet(); });
+  delegate("f-rain", "r", (v) => { draft.rain = v; renderItemSheet(); });
+  delegate("f-occ", "o", (v) => { draft.occ = draft.occ.includes(v) ? draft.occ.filter((x) => x !== v) : draft.occ.concat(v); renderItemSheet(); });
+  delegate("f-dirty", "d", (v) => { draft.dirty = v === "true"; renderItemSheet(); });
+  on("btn-del", "click", deleteItem);
+  on("btn-camera", "click", async () => {
+    try {
+      const blob = await takePhoto();
+      if (blob && draft) setDraftPhoto(blob);
+    } catch (e) {
+      $("photo-status").textContent = e && e.name === "NotAllowedError"
+        ? "Caméra refusée. Autorise-la dans les réglages du navigateur, ou choisis une photo dans l'album."
+        : "Caméra indisponible sur cet appareil. Choisis une photo dans l'album.";
+    }
+  });
+  on("f-file", "change", async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f || !draft) return;
+    $("photo-status").textContent = "Préparation de la photo…";
+    try { setDraftPhoto(await resizeFile(f)); }
+    catch (ex) { $("photo-status").textContent = "Cette image n'a pas pu être lue. Essaie un fichier JPEG ou PNG."; }
+    e.target.value = "";
+  });
+
+  // agenda
+  delegate("days", "day", (d) => openDay(d));
+  delegate("history", "unwear", (id) => {
+    if (isDemo()) return;
+    sync.change((d) => { const h = d.history.find((x) => x.id === id); if (h) { h.deleted = true; h.t = Date.now(); } });
+    toast("Retiré de l'historique.");
+  });
+  delegate("d-occ", "o", (v) => { dayDraft.occ = v; renderDaySheet(); });
+  delegate("d-imp", "i", (v) => { dayDraft.important = v === "true"; renderDaySheet(); });
+  on("day-form", "submit", (e) => {
+    e.preventDefault();
+    const day = editingDay, entry = { occ: dayDraft.occ, important: dayDraft.important, note: $("d-note").value.trim(), t: Date.now() };
+    sync.change((d) => { d.agenda = d.agenda || {}; d.agenda[day] = entry; });
+    delete occOverride[day];
+    $("day-overlay").hidden = true;
+  });
+  on("btn-d-clear", "click", () => {
+    const day = editingDay;
+    sync.change((d) => { d.agenda = d.agenda || {}; d.agenda[day] = { deleted: true, t: Date.now() }; });
+    $("day-overlay").hidden = true;
+  });
+  on("day-close", "click", () => ($("day-overlay").hidden = true));
+  on("day-overlay", "click", (e) => { if (e.target === $("day-overlay")) $("day-overlay").hidden = true; });
+
+  // réglages
+  on("btn-new-profile", "click", () => openProfile(null));
+  delegate("profiles", "use", (id) => { activate(id); showTab("today"); });
+  delegate("profiles", "edit", (id) => openProfile(getProfiles().find((p) => p.id === id)));
+  on("profile-form", "submit", saveProfile);
+  on("profile-close", "click", () => ($("profile-overlay").hidden = true));
+  on("profile-overlay", "click", (e) => { if (e.target === $("profile-overlay")) $("profile-overlay").hidden = true; });
+  on("btn-p-del", "click", removeProfile);
+  on("btn-geo", "click", useGeo);
+  on("city-form", "submit", async (e) => {
+    e.preventDefault();
+    const q = $("city-input").value.trim(); if (!q) return;
+    $("city-results").innerHTML = '<span class="note">Recherche…</span>';
+    try {
+      const res = await searchCity(q);
+      $("city-results").innerHTML = res.length ? res.map((r, i) => '<button type="button" class="chip" data-city="' + i + '">' + esc(r.name) + "<small>" + esc(r.region) + "</small></button>").join("") : '<span class="note">Aucune ville trouvée.</span>';
+      $("city-results").onclick = (ev) => {
+        const b = ev.target.closest("[data-city]"); if (!b) return;
+        const r = res[+b.dataset.city];
+        settings.loc = { lat: +r.lat.toFixed(3), lon: +r.lon.toFixed(3), name: r.name };
+        saveSettings(); $("city-results").innerHTML = ""; $("city-input").value = "";
+        renderSettings(); weather = { 0: null, 1: null }; loadWeather(true);
+        toast("Météo de " + r.name + ".");
+      };
+    } catch (ex) { $("city-results").innerHTML = '<span class="note">Recherche impossible pour l\'instant. Vérifie ta connexion.</span>'; }
+  });
+  delegate("rest-chips", "r", (v) => { settings.restDays = +v; saveSettings(); renderSettings(); newSuggestion(true); });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (!$("item-overlay").hidden) closeItem();
+    $("profile-overlay").hidden = true; $("day-overlay").hidden = true;
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    if (sync) sync.sync();
+    loadWeather(false);
+  });
+}
+
+// ---------------- démarrage ----------------
+initCamera();
+bind();
+const startId = getActiveId();
+activate(getProfiles().some((p) => p.id === startId) ? startId : (getProfiles()[0] || {}).id || null);
+loadWeather(false);
+
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
