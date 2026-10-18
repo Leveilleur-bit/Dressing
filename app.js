@@ -8,7 +8,7 @@ import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
 import { askStylist, testKey, AiError } from "./js/ai.js";
 
-const VERSION = "1.3.2";
+const VERSION = "1.3.3";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -1069,5 +1069,25 @@ activate(getProfiles().some((p) => p.id === startId) ? startId : (getProfiles()[
 loadWeather(false);
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch(() => {});
 }
+
+// ---------------- mises à jour ----------------
+// L'iPhone garde volontiers l'ancienne version : on compare avec version.json à chaque ouverture.
+async function checkUpdate() {
+  try {
+    const r = await fetch("version.json?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) return;
+    const v = (await r.json()).version;
+    if (v && v !== VERSION) $("update-banner").hidden = false;
+  } catch (e) {}
+}
+async function applyUpdate() {
+  $("btn-update").disabled = true; $("btn-update").textContent = "Mise à jour…";
+  try { for (const k of await caches.keys()) if (k.startsWith("dressing-app-")) await caches.delete(k); } catch (e) {}
+  try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } catch (e) {}
+  location.reload();
+}
+$("btn-update").addEventListener("click", applyUpdate);
+checkUpdate();
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkUpdate(); });

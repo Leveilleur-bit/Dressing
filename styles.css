@@ -235,3 +235,6 @@ input[type="text"], input[type="password"], input[type="search"] { width: 100%; 
 .trip-day .h-thumbs { flex-wrap: wrap; overflow: visible; }
 .trip-day .h-thumbs .thumb { background: var(--bg); }
 input[type="date"], input[type="number"] { width: 100%; font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); min-height: 44px; }
+
+.update { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--accent); font-size: .92rem; }
+.update .btn { flex: none; padding: 8px 14px; }
