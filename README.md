@@ -6,7 +6,7 @@ Elle tient compte de :
 
 - **la météo**, récupérée automatiquement (température ressentie le matin et l'après-midi, pluie, vent, neige) ;
 - **la saison** de chaque pièce ;
-- **l'occasion** (quotidien, travail, soirée, sport), choisie toute seule d'après l'agenda ;
+- **l'occasion** (quotidien, travail, soirée, sport, maison / travaux), choisie toute seule d'après l'agenda ; une pièce marquée uniquement « Maison / travaux » n'est jamais proposée pour sortir ;
 - **les couleurs** (une seule couleur vive sur une base neutre) et **les motifs** (un seul à la fois) ;
 - **la rotation** : ce que tu as porté récemment passe après le reste ;
 - **le linge sale** : une pièce « au sale » n'est plus proposée jusqu'à ce qu'elle soit lavée ;

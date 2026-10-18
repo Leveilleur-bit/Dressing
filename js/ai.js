@@ -59,7 +59,8 @@ function describeItem(it, day) {
  * Demande une tenue. Renvoie {ids, title, why:[], tip}.
  */
 export async function askStylist(key, { items, ctx, weather, prefs, liked, disliked, current }) {
-  const clean = items.filter((i) => !i.dirty);
+  const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
+  const clean = items.filter((i) => !i.dirty && (ctx.occ === "maison" || !homeOnly(i)));
   const styleNames = STYLES.filter((s) => (prefs.styles || []).includes(s.id));
   const w = ctx.w;
   const weatherText = weather
@@ -71,6 +72,7 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked, disli
     "Tu composes UNE tenue complète uniquement avec les pièces listées (identifiants entre crochets), jamais avec des pièces inventées.",
     "Une tenue = un haut et un bas, ou une robe ; des chaussures s'il y en a ; une veste ou un manteau si la météo le demande. Tu peux superposer deux hauts (ex. chemise sous un pull).",
     "Respecte la météo, l'occasion, la saison et évite les pièces portées ces derniers jours.",
+    "L'occasion « maison / travaux » désigne une tenue pour rester chez soi ou bricoler : confort avant tout, pièces de maison (pilou, vieux jean, sweat) bienvenues, pas besoin de manteau ni de style.",
     "Inspire-toi fortement des styles et créatrices aimés : explique en quoi la tenue leur ressemble, concrètement.",
     "Réponds en JSON strict, sans texte autour, au format :",
     '{"pieces":["id1","id2"],"titre":"4 à 6 mots","pourquoi":["phrase courte","phrase courte","phrase courte"],"conseil":"une astuce de portage (rentrer la chemise, retrousser, accessoire déjà évoqué…) ou chaîne vide"}'

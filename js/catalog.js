@@ -29,7 +29,8 @@ export const SEASONS = [
 ];
 export const OCCS = [
   { id: "quotidien", label: "Quotidien" }, { id: "travail", label: "Travail" },
-  { id: "soiree", label: "Soirée" }, { id: "sport", label: "Sport" }
+  { id: "soiree", label: "Soirée" }, { id: "sport", label: "Sport" },
+  { id: "maison", label: "Maison / travaux" }
 ];
 export const MOODS = [
   { id: "", label: "Peu importe" }, { id: "confort", label: "Confort" },

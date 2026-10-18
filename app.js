@@ -7,7 +7,7 @@ import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
 import { askStylist, testKey, AiError } from "./js/ai.js";
 
-const VERSION = "1.1.1";
+const VERSION = "1.2.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -283,19 +283,21 @@ function setPrefs(patch) {
 function renderWardrobe() {
   const all = liveItems();
   $("count").textContent = isDemo() ? "exemple" : all.length + " pièce" + (all.length > 1 ? "s" : "");
-  $("cat-filter").innerHTML = [{ id: "tous", label: "Tout" }].concat(CATS).map((c) => {
-    const n = c.id === "tous" ? all.length : all.filter((i) => i.cat === c.id).length;
+  const isHome = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
+  const inFilter = (i, f) => f === "tous" ? true : f === "maison" ? (i.occ || []).includes("maison") : i.cat === f;
+  $("cat-filter").innerHTML = [{ id: "tous", label: "Tout" }].concat(CATS, [{ id: "maison", label: "Maison" }]).map((c) => {
+    const n = all.filter((i) => inFilter(i, c.id)).length;
     return '<button type="button" class="chip" id="filter-' + c.id + '" data-f="' + c.id + '" aria-pressed="' + (catFilter === c.id) + '">' + c.label + "<small>" + n + "</small></button>";
   }).join("");
   const dirty = all.filter((i) => i.dirty);
   $("laundry").hidden = !dirty.length;
   $("laundry-row").innerHTML = dirty.map((it) => '<button type="button" class="laundry-item" data-clean="' + esc(it.id) + '">' + thumb(it) +
     '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">Lavé</span></button>').join("");
-  const list = all.filter((i) => catFilter === "tous" || i.cat === catFilter)
+  const list = all.filter((i) => inFilter(i, catFilter))
     .sort((a, b) => CATS.findIndex((c) => c.id === a.cat) - CATS.findIndex((c) => c.id === b.cat) || a.name.localeCompare(b.name, "fr"));
   $("grid").innerHTML = list.length ? list.map((it) =>
     '<button type="button" class="card' + (it.dirty ? " is-dirty" : "") + '" data-id="' + esc(it.id) + '"' + (it.demo ? " disabled" : "") + ">" +
-    thumb(it, it.demo ? "Exemple" : it.dirty ? "Au sale" : "") +
+    thumb(it, it.demo ? "Exemple" : it.dirty ? "Au sale" : "", isHome(it) ? "Maison" : "") +
     '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">' + wornText(it) + (it.wornCount ? " · " + it.wornCount + " fois" : "") + "</span></button>"
   ).join("") : '<p class="empty">' + (all.length ? "Rien dans cette catégorie pour l'instant." : "Ton dressing est vide. Ajoute ton premier vêtement : une photo, un nom, et c'est parti.") + "</p>";
   hydratePhotos($("view-wardrobe"));
@@ -514,7 +516,7 @@ function openItem(it) {
   if (isDemo()) { openProfile(null); return; }
   editing = it || null;
   draft = it ? { ...it, pattern: it.pattern || "uni", rain: it.rain || "normal", occ: (it.occ || []).slice(), seasons: (it.seasons || []).slice(), styles: (it.styles || []).slice(), material: it.material || null } :
-    { name: "", cat: catFilter !== "tous" ? catFilter : "haut", color: "noir", pattern: "uni", warmth: 2, seasons: defaultSeasons(2), rain: "normal", occ: [context().occ], dirty: false, styles: [], material: null };
+    { name: "", cat: catFilter !== "tous" && catFilter !== "maison" ? catFilter : "haut", color: "noir", pattern: "uni", warmth: 2, seasons: catFilter === "maison" ? ["printemps", "ete", "automne", "hiver"] : defaultSeasons(2), rain: "normal", occ: [catFilter === "maison" ? "maison" : context().occ], dirty: false, styles: [], material: null };
   draft.newBlob = null; draft.previewUrl = null;
   $("item-title").textContent = it ? "Modifier" : "Nouveau vêtement";
   $("f-name").value = draft.name;
@@ -590,7 +592,7 @@ async function saveItemForm(e) {
       if (i >= 0) d.items[i] = item; else d.items.push(item);
     });
     if (oldPhoto && oldPhoto !== photo) sync.deletePhoto(oldPhoto);
-    if (catFilter !== "tous" && catFilter !== item.cat) catFilter = item.cat;
+    if (catFilter !== "tous" && catFilter !== "maison" && catFilter !== item.cat) catFilter = item.cat;
     closeItem();
     toast(wasEditing ? "Modifié." : item.name + " ajouté au dressing.");
     if (next) { const keepCat = item.cat; openItem(null); draft.cat = keepCat; renderItemSheet(); }

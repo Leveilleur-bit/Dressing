@@ -35,7 +35,10 @@ export const comboKey = (pieces) => pieces.map((p) => p.id).sort().join("|");
  * data : {items, feedback}
  */
 export function suggest(data, ctx, avoidKeys) {
-  const items = data.items.filter((i) => !i.deleted && !i.dirty);
+  const home = ctx.occ === "maison";
+  // une pièce réservée à la maison ne sort jamais
+  const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
+  const items = data.items.filter((i) => !i.deleted && !i.dirty && (home || !homeOnly(i)));
   const fb = data.feedback || {};
   const disliked = new Set(Object.keys(fb).filter((k) => fb[k].v === -1));
   const liked = new Set(Object.keys(fb).filter((k) => fb[k].v === 1));
@@ -51,15 +54,16 @@ export function suggest(data, ctx, avoidKeys) {
     }
   }
 
-  const w = ctx.w;
+  // à la maison, on compte sur le chauffage : ressenti ramené entre 13 et 24°, pas de pluie
+  const w = home ? { ...ctx.w, morning: Math.min(24, Math.max(13, ctx.w.morning)), afternoon: Math.min(24, Math.max(13, ctx.w.afternoon ?? ctx.w.morning)), rain: false, snow: false, wind: 0 } : ctx.w;
   const cold = w.morning;               // ressenti du matin
   const warm = w.afternoon ?? w.morning; // ressenti de l'après-midi
   const swing = warm - cold;
   const layered = swing >= 7;
   // la base (haut/bas) suit l'après-midi quand il y a un gros écart, la veste couvre le matin
   const baseTarget = warmthFor(layered ? (cold + warm) / 2 + 2 : (cold + warm) / 2);
-  const needJacket = cold < 15 || w.rain || w.snow;
-  const allowJacket = needJacket || cold < 21 || w.wind >= 35;
+  const needJacket = !home && (cold < 15 || w.rain || w.snow);
+  const allowJacket = home ? cold < 16 : needJacket || cold < 21 || w.wind >= 35;
 
   const by = (c) => items.filter((i) => i.cat === c);
   const tops = by("haut"), bottoms = by("bas"), dresses = by("robe"), jackets = by("veste"), shoes = by("chaussures");
@@ -85,7 +89,7 @@ export function suggest(data, ctx, avoidKeys) {
     if (it.seasons && it.seasons.length) s += it.seasons.includes(ctx.season) ? 1 : -4;
 
     // occasion
-    s += (it.occ || []).includes(ctx.occ) ? 2 : -3.5;
+    s += (it.occ || []).includes(ctx.occ) ? (home ? 3 : 2) : -3.5;
 
     // pluie
     if (w.rain || w.snow) {
@@ -133,7 +137,7 @@ export function suggest(data, ctx, avoidKeys) {
     if (pieces.some((p) => p.cat === "robe") && cold < 5) s -= 1.5;
 
     // goûts appris
-    const st = styleScore(pieces, ctx.styles || [], COLORS);
+    const st = home ? { score: 0, reasons: [] } : styleScore(pieces, ctx.styles || [], COLORS);
     s += st.score;
 
     if (liked.has(key)) s += 3;
@@ -148,16 +152,21 @@ export function suggest(data, ctx, avoidKeys) {
   const ranked = [...combos.values()].sort((a, b) => b.score - a.score);
   if (!ranked.length) return null;
   const fresh = ranked.filter((c) => !avoidKeys.includes(c.key));
-  const pool = (fresh.length ? fresh : ranked).slice(0, 3);
+  const cands = fresh.length ? fresh : ranked;
+  // on varie seulement entre des tenues presque aussi bonnes que la meilleure
+  const pool = cands.slice(0, 3).filter((c) => c.score >= cands[0].score - 3);
   const chosen = pool[Math.floor(Math.random() * pool.length)];
   return { ...chosen, reasons: explain(chosen, ctx, { needJacket, layered, liked, pairScore }) };
 }
 
 function explain(c, ctx, info) {
   const out = [];
-  const w = ctx.w;
+  const home = ctx.occ === "maison";
+  const w = home ? { ...ctx.w, rain: false, snow: false, wind: 0 } : ctx.w;
+  if (home) out.push("Tenue pour rester à la maison ou bricoler : on privilégie le confort.");
   const jacket = c.pieces.find((p) => p.cat === "veste");
-  if (jacket && info.layered) out.push(`Gros écart dans la journée (${Math.round(w.morning)}° ressentis le matin, ${Math.round(w.afternoon)}° l'après-midi) : ${jacket.name.toLowerCase()} à enlever en route.`);
+  if (home) { /* pas de commentaire météo */ }
+  else if (jacket && info.layered) out.push(`Gros écart dans la journée (${Math.round(w.morning)}° ressentis le matin, ${Math.round(w.afternoon)}° l'après-midi) : ${jacket.name.toLowerCase()} à enlever en route.`);
   else if (jacket && (w.rain || w.snow) && jacket.rain === "impermeable") out.push(`${jacket.name} : il protège de la ${w.snow ? "neige" : "pluie"}.`);
   else if (jacket && (w.rain || w.snow)) out.push(`Une veste pour la ${w.snow ? "neige" : "pluie"}.`);
   else if (jacket && info.needJacket) out.push(`Une couche en plus pour ${Math.round(w.morning)}° ressentis le matin.`);
@@ -200,7 +209,7 @@ export function missingNote(items, ctx) {
   if (!has("robe") && !has("haut")) miss.push("un haut");
   if (!has("robe") && !has("bas")) miss.push("un bas");
   if (!has("chaussures")) miss.push("des chaussures");
-  if ((ctx.w.morning < 15 || ctx.w.rain) && !has("veste")) miss.push("une veste");
+  if (ctx.occ !== "maison" && (ctx.w.morning < 15 || ctx.w.rain) && !has("veste")) miss.push("une veste");
   if (!miss.length) return "";
   return "Ajoute " + miss.join(", ") + " pour compléter les tenues" + (items.some((i) => i.dirty && !i.deleted) ? " (les pièces au sale sont mises de côté)." : ".");
 }
