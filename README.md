@@ -21,6 +21,8 @@ Et aussi :
 - la **recherche** dans le dressing, et le filtre **À trier** (pièces pas portées depuis 6 mois) ;
 - l'**occasion par défaut** en semaine et le week-end, réglable pour chaque personne ;
 - la **valise** : destination, dates, météo sur place, une tenue par jour qui réutilise les mêmes pièces, et la liste à cocher.
+- le **détourage automatique** des photos : pose le vêtement à plat sur un drap ou un sol uni et contrasté, l'appli enlève le fond ;
+- la tenue présentée en **flat lay** (haut, veste qui chevauche, bas, chaussures, sac), et la **garde-robe de la semaine** : une planche avec les pièces de la semaine et une tenue prévue pour chaque jour.
 
 ## Où sont les données
 

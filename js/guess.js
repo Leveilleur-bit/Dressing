@@ -5,7 +5,7 @@ const has = (name, words) => words.some((w) => new RegExp("(^|[^a-z])" + w).test
 
 const CAT_WORDS = [
   ["accessoire", ["sac", "pochette", "cabas", "echarpe", "foulard", "cheche", "snood", "bonnet", "gant", "moufle", "ceinture", "collier", "bracelet", "bague", "boucles? d", "montre", "chapeau", "casquette", "beret", "bob", "lunettes"]],
-  ["chaussures", ["basket", "sneaker", "chaussure", "botte", "boots", "bottine", "mocassin", "derby", "derbies", "richelieu", "sandale", "tong", "escarpin", "ballerine", "espadrille", "chausson", "mule", "santiag", "converse", "stan smith", "talon"]],
+  ["chaussures", ["basket", "sneaker", "chaussure", "botte", "boots", "bottine", "mocassin", "derby", "derbies", "richelieu", "sandale", "tong", "escarpin", "ballerine", "espadrille", "chausson", "mule", "santiag", "converse", "stan smith", "talon", "slingback", "babies", "babie", "trotteur", "loafer", "mary.jane", "sabot", "claquette", "bottillon", "richelieu", "chelsea", "nu-pied", "nu pied"]],
   ["veste", ["veste", "manteau", "trench", "blouson", "parka", "doudoune", "caban", "blazer", "perfecto", "imper", "k-way", "kway", "cire", "bomber", "teddy", "duffle", "surchemise", "gilet sans manche", "doudounette", "peignoir"]],
   ["robe", ["robe", "combinaison", "salopette"]],
   ["bas", ["jean", "pantalon", "chino", "short", "bermuda", "jupe", "legging", "jogging", "cargo", "culotte", "survetement bas", "bas de"]],

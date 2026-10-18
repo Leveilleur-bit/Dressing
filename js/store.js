@@ -46,6 +46,7 @@ export function merge(local, remote) {
     feedback: mergeMap(remote.feedback, local.feedback),
     agenda: mergeMap(remote.agenda, local.agenda),
     trips: mergeMap(remote.trips, local.trips),
+    week: ((local.week && local.week.t) || 0) > ((remote.week && remote.week.t) || 0) ? local.week : remote.week || null,
     prefs: ((local.prefs && local.prefs.t) || 0) > ((remote.prefs && remote.prefs.t) || 0) ? local.prefs : remote.prefs || emptyDoc().prefs
   };
 }
@@ -135,8 +136,9 @@ export class Sync {
   // ---------- photos ----------
   cacheKey(path) { return "https://dressing.photos/" + this.profile.id + "/" + path; }
 
-  async uploadPhoto(blob, itemId) {
-    const path = "photos/" + itemId + "-" + Date.now().toString(36) + ".jpg";
+  async uploadPhoto(blob, itemId, suffix = "") {
+    const ext = blob.type === "image/png" ? ".png" : ".jpg";
+    const path = "photos/" + itemId + "-" + Date.now().toString(36) + suffix + ext;
     await this.repo.putBlob(path, blob, "Photo : " + itemId);
     await this.cachePut(path, blob);
     this.photoUrls.set(path, URL.createObjectURL(blob));
@@ -144,7 +146,7 @@ export class Sync {
   }
 
   async cachePut(path, blob) {
-    try { const c = await caches.open("dressing-photos"); await c.put(this.cacheKey(path), new Response(blob, { headers: { "Content-Type": "image/jpeg" } })); } catch (e) {}
+    try { const c = await caches.open("dressing-photos"); await c.put(this.cacheKey(path), new Response(blob, { headers: { "Content-Type": blob.type || (path.endsWith(".png") ? "image/png" : "image/jpeg") } })); } catch (e) {}
   }
 
   async photoUrl(path) {

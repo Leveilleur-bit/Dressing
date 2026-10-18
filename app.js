@@ -7,15 +7,16 @@ import { fetchTwoDays, fetchRange, searchCity, locate } from "./js/weather.js";
 import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.js";
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
 import { askStylist, testKey, AiError } from "./js/ai.js";
+import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.3.3";
+const VERSION = "1.4.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // ---------------- état ----------------
 let sync = null;               // synchronisation du profil actif (null = exemple)
 let doc = null;                // données du dressing affiché
-let demoDoc = { items: demoItems(), history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {} };
+let demoDoc = { items: demoItems(), history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {}, week: null };
 let tripDraft = null, openTripId = null;
 let aiBusy = false;
 let dayOffset = new Date().getHours() >= 19 ? 1 : 0;
@@ -93,9 +94,11 @@ function glyph(cat, color, acc) {
   return '<svg viewBox="0 0 64 64" aria-hidden="true"><path fill-rule="evenodd" d="' + path + '" fill="' + hex + '" stroke="currentColor" stroke-opacity=".55" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 }
 function thumb(it, tag, tagRight, extraAttr = "") {
-  const photoAttr = it.photo && sync ? ' data-photo="' + esc(it.photo) + '" data-alt="' + esc(it.name) + '"' : "";
+  const path = it.cut || it.photo;
+  const isCut = !!(it.previewUrl ? it.previewIsCut : it.cut);
+  const photoAttr = path && sync && !it.previewUrl ? ' data-photo="' + esc(path) + '" data-alt="' + esc(it.name) + '"' : "";
   const preview = it.previewUrl ? '<img src="' + esc(it.previewUrl) + '" alt="">' : glyph(it.cat, it.color, it.acc);
-  return '<div class="thumb"' + photoAttr + extraAttr + ">" + preview +
+  return '<div class="thumb' + (isCut ? " is-cut" : "") + '"' + photoAttr + extraAttr + ">" + preview +
     (tag ? '<span class="tag">' + esc(tag) + "</span>" : "") +
     (tagRight ? '<span class="tag right plain">' + esc(tagRight) + "</span>" : "") + "</div>";
 }
@@ -112,6 +115,52 @@ function hydratePhotos(root) {
       el.prepend(img);
     }).catch(() => {});
   });
+}
+
+// ---------------- flat lay ----------------
+// Composition façon « flat lay » : le haut, la veste qui le chevauche, le bas dessous,
+// les chaussures en bas, le sac sur le côté, les accessoires autour. Positions en % du cadre.
+const FL = {
+  haut: { l: 8, t: 5, w: 46, h: 36, z: 3 },
+  haut2: { l: 26, t: 3, w: 40, h: 34, z: 2 },
+  robe: { l: 9, t: 4, w: 46, h: 68, z: 2 },
+  bas: { l: 13, t: 35, w: 40, h: 47, z: 1 },
+  veste: { l: 41, t: 9, w: 50, h: 40, z: 4 },
+  chaussures: { l: 15, t: 82, w: 36, h: 14, z: 5 },
+  chaussures2: { l: 52, t: 84, w: 30, h: 12, z: 5 },
+  sac: { l: 61, t: 51, w: 32, h: 30, z: 5 },
+  echarpe: { l: 50, t: 2, w: 24, h: 30, z: 6 },
+  bonnet: { l: 75, t: 1, w: 22, h: 15, z: 6 },
+  chapeau: { l: 73, t: 1, w: 25, h: 15, z: 6 },
+  gants: { l: 1, t: 47, w: 15, h: 16, z: 6 },
+  ceinture: { l: 12, t: 33, w: 44, h: 6, z: 4 },
+  lunettes: { l: 57, t: 85, w: 27, h: 9, z: 6 },
+  bijou: { l: 1, t: 82, w: 13, h: 12, z: 6 },
+  extra: [{ l: 75, t: 18, w: 22, h: 18, z: 6 }, { l: 1, t: 64, w: 15, h: 16, z: 6 }, { l: 84, t: 84, w: 15, h: 12, z: 6 }, { l: 1, t: 1, w: 16, h: 14, z: 6 }]
+};
+function flatlay(pieces, small = false) {
+  const used = new Set();
+  let extra = 0;
+  const slotFor = (p) => {
+    let k = p.cat === "accessoire" ? p.acc || "sac" : p.cat;
+    if (k === "haut" && used.has("haut")) k = "haut2";
+    if (k === "chaussures" && used.has("chaussures")) k = "chaussures2";
+    let s = !used.has(k) && FL[k];
+    if (s) used.add(k);
+    else s = FL.extra[extra++ % FL.extra.length];
+    // sans veste ni bas (robe seule) : on resserre un peu la composition
+    if (k === "sac" && !pieces.some((x) => x.cat === "veste")) s = { ...s, t: 34 };
+    if (k === "chaussures" && pieces.some((x) => x.cat === "robe") && !pieces.some((x) => x.cat === "bas")) s = { ...s, t: 78 };
+    return s;
+  };
+  const html = pieces.map((p, i) => {
+    const s = slotFor(p);
+    const path = p.cut || p.photo;
+    const kind = p.cut ? "fl-cut" : p.photo ? "fl-photo" : "fl-glyph";
+    const data = path && sync ? ' data-photo="' + esc(path) + '" data-alt="' + esc(p.name) + '"' : "";
+    return '<div class="fl-item ' + kind + '" style="left:' + s.l + "%;top:" + s.t + "%;width:" + s.w + "%;height:" + s.h + "%;z-index:" + s.z + ";animation-delay:" + i * 0.05 + 's"' + data + ' title="' + esc(p.name) + '">' + glyph(p.cat, p.color, p.acc) + "</div>";
+  }).join("");
+  return '<div class="flatlay' + (small ? " small" : "") + '">' + html + "</div>";
 }
 
 // ---------------- toast ----------------
@@ -194,7 +243,7 @@ function renderControls() {
 function renderOutfit() {
   const lay = $("lay"), why = $("why");
   const c = context();
-  $("outfit-title").textContent = current && current.ai ? current.title : dayOffset === 0 ? "Tenue du jour" : "Tenue de demain";
+  $("outfit-title").textContent = current && current.ai ? current.title : (dayOffset === 0 ? "Tenue du jour" : "Tenue de demain") + (current && current.week ? " · prévue" : "");
   $("btn-ai").disabled = aiBusy || !current;
   if (!current) {
     lay.innerHTML = "";
@@ -206,12 +255,8 @@ function renderOutfit() {
   ["btn-wear", "btn-other", "btn-like", "btn-dislike"].forEach((id) => ($(id).disabled = false));
   const order = { veste: 0, haut: 1, robe: 1, bas: 2, chaussures: 3, accessoire: 4 };
   const pieces = current.pieces.slice().sort((a, b) => (order[a.cat] ?? 5) - (order[b.cat] ?? 5));
-  const odd = pieces.length % 2 === 1;
-  lay.innerHTML = pieces.map((p, i) => {
-    const wide = odd && i === pieces.length - 1;
-    return '<div class="piece' + (wide ? " wide" : "") + '">' + thumb(p, catLabel(p)) +
-      '<span class="piece-name">' + esc(p.name) + '</span><span class="piece-meta">' + wornText(p) + "</span></div>";
-  }).join("");
+  lay.innerHTML = flatlay(pieces) +
+    '<ul class="fl-list">' + pieces.map((p) => '<li><span class="tag">' + esc(catLabel(p)) + '</span><span class="piece-name">' + esc(p.name) + '</span><span class="piece-meta">' + wornText(p) + "</span></li>").join("") + "</ul>";
   hydratePhotos(lay);
   const lines = current.reasons.slice();
   if (current.tip) lines.push("Astuce : " + current.tip);
@@ -228,6 +273,10 @@ function newSuggestion(reset) {
   if (reset || k !== lastCtxKey) seen = [];
   lastCtxKey = k;
   wornKey = null; $("outfit-msg").hidden = true;
+  if (!seen.length) {
+    const wk = weekOutfitFor(c);
+    if (wk) { current = wk; seen.push(wk.key); renderOutfit(); return; }
+  }
   const items = liveItems();
   current = suggest({ items, feedback: data().feedback }, c, seen);
   if (current) { seen.push(current.key); if (seen.length > 10) seen.shift(); }
@@ -350,6 +399,7 @@ function renderAgenda() {
   }
   $("days").innerHTML = rows.join("");
   renderTrips();
+  renderWeek();
   if (openTripId && !$("tripview-overlay").hidden) renderTripView();
 
   const byId = new Map((data().items || []).map((i) => [i.id, i]));
@@ -378,6 +428,94 @@ function renderDaySheet() {
   $("d-imp").innerHTML = [[false, "Normal"], [true, "Important"]].map(([v, l]) => '<button type="button" class="chip" data-i="' + v + '" aria-pressed="' + (dayDraft.important === v) + '">' + l + "</button>").join("");
 }
 
+
+
+// ---------------- GARDE-ROBE DE LA SEMAINE ----------------
+async function computeWeek() {
+  const start = dayStr(0);
+  let forecast = {};
+  if (settings.loc) { try { forecast = await fetchRange(settings.loc.lat, settings.loc.lon); } catch (e) { forecast = {}; } }
+  const climate = MANUAL_TEMPS.find((t) => t.id === (settings.manual.temp || defaultManual())) || MANUAL_TEMPS[1];
+  const ag = data().agenda || {};
+  const days = [], wx = {};
+  for (let i = 0; i < 7; i++) {
+    const day = addDays(start, i);
+    const a = ag[day] && !ag[day].deleted ? ag[day] : null;
+    const occ = (a && a.occ) || (new Date(day + "T12:00:00").getDay() % 6 === 0 ? weekendOcc() : weekdayOcc());
+    const f = forecast[day];
+    const w = f ? { morning: f.morning.feels, afternoon: f.afternoon.feels, rain: f.rain, wind: f.wind, snow: f.snow }
+      : { morning: climate.m, afternoon: climate.a, rain: false, wind: 0, snow: false };
+    if (f) wx[day] = { m: Math.round(f.morning.feels), a: Math.round(f.afternoon.feels), rain: f.rain, snow: f.snow };
+    days.push({ day, season: seasonOf(day), occ, w, important: !!(a && a.important), label: fmtDay(day, { weekday: "long", day: "numeric" }) });
+  }
+  const items = liveItems().map((i) => ({ ...i, dirty: false }));
+  const res = planTrip({ items, feedback: data().feedback }, days, { mood: "", styles: prefs().styles || [] });
+  return {
+    start,
+    outfits: res.outfits.map((o, i) => ({ day: o.day, label: days[i].label, occ: days[i].occ, ids: o.pieces.map((p) => p.id) })),
+    packed: res.packed.map((p) => p.id),
+    wx, t: Date.now()
+  };
+}
+const liveWeek = () => { const w = data().week; return w && !w.deleted && w.outfits && addDays(w.start, 6) >= dayStr(0) ? w : null; };
+
+/** La tenue prévue pour ce jour dans la semaine, si elle tient toujours (pièces présentes et propres, même occasion). */
+function weekOutfitFor(c) {
+  const w = liveWeek(); if (!w) return null;
+  const o = w.outfits.find((x) => x.day === c.day); if (!o || o.occ !== c.occ || !o.ids.length) return null;
+  const byId = new Map(liveItems().map((i) => [i.id, i]));
+  const pieces = o.ids.map((id) => byId.get(id));
+  if (pieces.some((p) => !p || p.dirty)) return null;
+  const main = pieces.filter((p) => p.cat !== "accessoire");
+  const wd = (w.wx || {})[c.day];
+  return { key: comboKey(main), pieces, week: true,
+    reasons: ["Tenue prévue dans ta garde-robe de la semaine." + (wd ? " Météo prévue : " + wd.m + "° le matin, " + wd.a + "° l'après-midi." : ""), "« Autre idée » propose autre chose sans toucher à la semaine."] };
+}
+
+function boardTile(p) {
+  const path = p.cut || p.photo;
+  const kind = p.cut ? "fl-cut" : p.photo ? "fl-photo" : "fl-glyph";
+  const data = path && sync ? ' data-photo="' + esc(path) + '" data-alt="' + esc(p.name) + '"' : "";
+  return '<div class="board-item ' + kind + '"' + data + ' title="' + esc(p.name) + '">' + glyph(p.cat, p.color, p.acc) + "</div>";
+}
+
+function renderWeek() {
+  const el = $("week");
+  const w = liveWeek();
+  if (!w) {
+    el.innerHTML = '<p class="hint">Les pièces de ta semaine sur une seule planche, et une tenue prévue pour chaque jour selon la météo et ton agenda. Ces pièces se combinent entre elles : tu sors tout le dimanche soir et la semaine est réglée.</p>' +
+      '<button class="btn primary block" type="button" data-wk-act="make">Préparer ma semaine</button>';
+    return;
+  }
+  const byId = new Map(liveItems().map((i) => [i.id, i]));
+  const order = CATS.map((c) => c.id);
+  const packed = w.packed.map((id) => byId.get(id)).filter(Boolean).sort((a, b) => order.indexOf(a.cat) - order.indexOf(b.cat));
+  const today = dayStr(0);
+  el.innerHTML =
+    '<div class="board"><div class="board-title"><span class="board-big">Wardrobe</span><span class="board-sub">de la semaine</span></div>' +
+    '<div class="board-grid">' + packed.map(boardTile).join("") + "</div></div>" +
+    '<p class="note">' + packed.length + " pièces pour 7 tenues · du " + esc(fmtDay(w.start, { weekday: "long", day: "numeric" })) + " au " + esc(fmtDay(addDays(w.start, 6), { weekday: "long", day: "numeric", month: "long" })) + "</p>" +
+    '<div class="week-days">' + w.outfits.filter((o) => o.day >= today).map((o) => {
+      const pieces = o.ids.map((id) => byId.get(id)).filter(Boolean);
+      const wd = (w.wx || {})[o.day];
+      return '<div class="week-day"><span class="label">' + esc(o.day === today ? "Aujourd'hui" : o.label) + "</span>" + flatlay(pieces, true) +
+        '<span class="piece-meta">' + esc((OCCS.find((x) => x.id === o.occ) || {}).label || "") + (wd ? " · " + wd.m + "° → " + wd.a + "°" + (wd.snow ? " · neige" : wd.rain ? " · pluie" : "") : "") + "</span></div>";
+    }).join("") + "</div>" +
+    '<div class="actions"><button class="btn" type="button" data-wk-act="clear">Effacer</button><button class="btn" type="button" data-wk-act="make">Recalculer</button></div>';
+  hydratePhotos(el);
+}
+
+async function weekAction(act, b) {
+  if (act === "clear") { mutate((d) => { d.week = { deleted: true, t: Date.now() }; }); return; }
+  if (act === "make") {
+    if (!liveItems().length) { toast("Ajoute d'abord des vêtements à ton dressing."); return; }
+    b.disabled = true; b.textContent = "Préparation…";
+    const plan = await computeWeek();
+    mutate((d) => { d.week = plan; });
+    current = null; seen = [];
+    toast("Ta semaine est prête.");
+  }
+}
 
 // ---------------- VALISES ----------------
 function mutate(fn) {
@@ -690,7 +828,8 @@ function openItem(it) {
   editing = it || null;
   draft = it ? { ...it, pattern: it.pattern || "uni", rain: it.rain || "normal", occ: (it.occ || []).slice(), seasons: (it.seasons || []).slice(), styles: (it.styles || []).slice(), material: it.material || null, acc: it.acc || (it.cat === "accessoire" ? "sac" : null) } :
     { name: "", cat: "haut", color: "noir", pattern: "uni", warmth: 2, seasons: [], rain: "normal", occ: [], dirty: false, styles: [], material: null, acc: null };
-  draft.newBlob = null; draft.previewUrl = null;
+  draft.newBlob = null; draft.previewUrl = null; draft.cutBlob = null; draft.cutUrl = null; draft.cutBusy = false;
+  draft.useCut = it && it.cut ? true : undefined;
   // en création, tout ce qui n'a pas été touché à la main est deviné ; en modification, rien ne bouge tout seul
   draft.touched = new Set(it ? ["cat", "acc", "warmth", "material", "pattern", "rain", "styles", "occ", "seasons"] : []);
   // catégorie de départ : celle du filtre ; le nom peut la changer (« Jean… » → Bas)
@@ -711,6 +850,7 @@ function openItem(it) {
 function closeItem() {
   $("item-overlay").hidden = true;
   if (draft && draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+  if (draft && draft.cutUrl) URL.revokeObjectURL(draft.cutUrl);
   editing = null; draft = null;
 }
 function autoFill() {
@@ -744,7 +884,11 @@ function detailSummary() {
 function renderItemSheet() {
   const old = $("f-preview");
   const tmp = document.createElement("div");
-  tmp.innerHTML = thumb({ ...draft, photo: draft.previewUrl ? null : draft.photo }, "", "", ' id="f-preview"');
+  const showCut = draft.cutUrl && draft.useCut;
+  tmp.innerHTML = thumb({ ...draft, previewUrl: showCut ? draft.cutUrl : draft.previewUrl, previewIsCut: showCut, cut: draft.useCut === false ? null : draft.cut }, "", "", ' id="f-preview"');
+  $("f-cutmode").hidden = !(draft.cutUrl || draft.cut);
+  $("f-cutmode").innerHTML = [[true, "Détouré"], [false, "Photo entière"]].map(([v, l]) => '<button type="button" class="chip" data-cm="' + v + '" aria-pressed="' + ((draft.useCut !== false) === v) + '">' + l + "</button>").join("");
+  $("btn-cut").hidden = !(sync && draft.photo && !draft.cut && !draft.newBlob && !draft.cutUrl) || draft.cutBusy;
   old.replaceWith(tmp.firstChild);
   hydratePhotos($("item-form"));
   const chips = (list, key, multi, attr) => list.map((o) => {
@@ -769,7 +913,29 @@ function setDraftPhoto(blob) {
   draft.newBlob = blob;
   if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
   draft.previewUrl = URL.createObjectURL(blob);
-  $("photo-status").textContent = "Photo prête. Elle part dans ton dépôt privé à l'enregistrement.";
+  clearCut();
+  renderItemSheet();
+  runCutout(blob);
+}
+function clearCut() {
+  if (draft.cutUrl) URL.revokeObjectURL(draft.cutUrl);
+  draft.cutBlob = null; draft.cutUrl = null; draft.useCut = undefined;
+}
+async function runCutout(blob) {
+  const d = draft;
+  d.cutBusy = true;
+  $("photo-status").textContent = "Détourage du vêtement…";
+  let r;
+  try { r = await removeBackground(blob); } catch (e) { r = { ok: false }; }
+  d.cutBusy = false;
+  if (draft !== d) return; // fiche fermée entre-temps
+  if (r.ok) {
+    d.cutBlob = r.blob; d.cutUrl = URL.createObjectURL(r.blob); d.useCut = true;
+    $("photo-status").textContent = "Vêtement détouré. Si le résultat ne te plaît pas, choisis « Photo entière ».";
+  } else {
+    d.useCut = false;
+    $("photo-status").textContent = "Fond trop chargé ou trop proche du vêtement : photo gardée entière. Astuce : pose le vêtement à plat sur un drap ou un sol uni, de couleur différente, sans qu'il touche les bords.";
+  }
   renderItemSheet();
 }
 
@@ -790,10 +956,13 @@ async function saveItemForm(e) {
   const oldPhoto = editing ? editing.photo : null;
   try {
     let photo = draft.photo || null;
-    if (draft.newBlob) photo = await sync.uploadPhoto(draft.newBlob, id);
+    let cut = draft.useCut === false ? null : draft.cut || null;
+    if (draft.newBlob) { photo = await sync.uploadPhoto(draft.newBlob, id); cut = null; }
+    if (draft.cutBlob && draft.useCut) cut = await sync.uploadPhoto(draft.cutBlob, id, "-cut");
+    const oldCut = editing ? editing.cut : null;
     const item = {
       id, name: draft.name, cat: draft.cat, color: draft.color, pattern: draft.pattern, warmth: draft.warmth,
-      seasons: draft.seasons, rain: draft.rain, occ: draft.occ, dirty: !!draft.dirty, dirtyAt: draft.dirty ? (editing && editing.dirty && editing.dirtyAt) || Date.now() : null, photo,
+      cut, seasons: draft.seasons, rain: draft.rain, occ: draft.occ, dirty: !!draft.dirty, dirtyAt: draft.dirty ? (editing && editing.dirty && editing.dirtyAt) || Date.now() : null, photo,
       styles: draft.styles, material: draft.material || null, acc: draft.cat === "accessoire" ? draft.acc || "sac" : null,
       createdAt: editing ? editing.createdAt || Date.now() : Date.now(), updatedAt: Date.now()
     };
@@ -802,6 +971,7 @@ async function saveItemForm(e) {
       if (i >= 0) d.items[i] = item; else d.items.push(item);
     });
     if (oldPhoto && oldPhoto !== photo) sync.deletePhoto(oldPhoto);
+    if (oldCut && oldCut !== cut) sync.deletePhoto(oldCut);
     if (catFilter !== "tous" && catFilter !== "maison" && catFilter !== item.cat) catFilter = item.cat;
     closeItem();
     toast(wasEditing ? "Modifié." : item.name + " ajouté au dressing.");
@@ -823,6 +993,7 @@ function deleteItem() {
     if (i >= 0) d.items[i] = { id: it.id, deleted: true, updatedAt: Date.now() };
   });
   if (it.photo) sync.deletePhoto(it.photo);
+  if (it.cut) sync.deletePhoto(it.cut);
   closeItem();
   toast(it.name + " supprimé.");
 }
@@ -911,6 +1082,13 @@ function bind() {
   delegate("f-occ", "o", (v) => { draft.occ = draft.occ.includes(v) ? draft.occ.filter((x) => x !== v) : draft.occ.concat(v); touch("occ"); refill(); });
   delegate("f-dirty", "d", (v) => { draft.dirty = v === "true"; renderItemSheet(); });
   on("btn-del", "click", deleteItem);
+  delegate("f-cutmode", "cm", (v) => { draft.useCut = v === "true"; renderItemSheet(); });
+  on("btn-cut", "click", async () => {
+    if (!draft || !draft.photo) return;
+    $("btn-cut").hidden = true;
+    try { const url = await sync.photoUrl(draft.photo); const blob = await (await fetch(url)).blob(); await runCutout(blob); }
+    catch (e) { $("photo-status").textContent = "La photo n'a pas pu être chargée. Vérifie ta connexion."; }
+  });
   on("btn-camera", "click", async () => {
     try {
       const blob = await takePhoto();
@@ -953,6 +1131,7 @@ function bind() {
   on("day-close", "click", () => ($("day-overlay").hidden = true));
   on("day-overlay", "click", (e) => { if (e.target === $("day-overlay")) $("day-overlay").hidden = true; });
 
+  delegate("week", "wk-act", (act, b) => weekAction(act, b));
   // valises
   on("btn-new-trip", "click", openTripForm);
   delegate("trips", "trip", (id) => openTrip(id));

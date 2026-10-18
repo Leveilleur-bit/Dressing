@@ -108,6 +108,10 @@
   <!-- ============ AGENDA ============ -->
   <main id="view-agenda" class="view" hidden>
     <div class="outfit-head">
+      <h2>La garde-robe de la semaine</h2>
+    </div>
+    <div class="week" id="week"></div>
+    <div class="outfit-head" style="margin-top:8px">
       <h2>Agenda</h2>
     </div>
     <p class="hint">Note les jours qui comptent. Ce jour-là, l'appli choisit l'occasion toute seule et propose plus habillé si c'est important.</p>
@@ -205,6 +209,8 @@
         <label class="btn" for="f-file">Choisir dans l'album</label>
         <input class="visually-hidden" type="file" id="f-file" accept="image/*">
         <span class="note small" id="photo-status">Photo prise ici : rien n'est gardé dans ton album.</span>
+        <div class="chips" id="f-cutmode" hidden></div>
+        <button class="btn" type="button" id="btn-cut" hidden>Détourer la photo</button>
       </div>
     </div>
     <div class="group">
