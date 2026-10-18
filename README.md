@@ -12,6 +12,15 @@ Elle tient compte de :
 - **le linge sale** : une pièce « au sale » n'est plus proposée jusqu'à ce qu'elle soit lavée ;
 - **tes goûts** : « J'aime » et « Pas pour moi » apprennent ce qui te plaît ;
 - **ton envie du jour** : confort, classe ou de la couleur.
+- **les accessoires** : écharpe, bonnet et gants quand il fait froid, lunettes et chapeau au soleil, sac, ceinture ou bijou assortis ;
+- **tes styles et créatrices** préférés (jusqu'à 3 par personne), et en option une **styliste IA**.
+
+Et aussi :
+
+- une **fiche d'ajout courte** : photo, nom, catégorie, couleur, épaisseur ; le reste est deviné d'après le nom (« Chemise en lin » → haut, léger, lin, printemps-été, travail) et se corrige dans « Plus de détails » ;
+- la **recherche** dans le dressing, et le filtre **À trier** (pièces pas portées depuis 6 mois) ;
+- l'**occasion par défaut** en semaine et le week-end, réglable pour chaque personne ;
+- la **valise** : destination, dates, météo sur place, une tenue par jour qui réutilise les mêmes pièces, et la liste à cocher.
 
 ## Où sont les données
 

@@ -1,5 +1,5 @@
 // Choix de la tenue : on génère des combinaisons et on garde les mieux notées.
-import { COLORS, CATS } from "./catalog.js";
+import { COLORS, CATS, ACC_TYPES } from "./catalog.js";
 import { styleScore, STYLES } from "./styles.js";
 
 export function seasonOf(dateStr) {
@@ -34,11 +34,13 @@ export const comboKey = (pieces) => pieces.map((p) => p.id).sort().join("|");
  *        w: {morning, afternoon, rain, wind, snow}}  (températures ressenties)
  * data : {items, feedback}
  */
-export function suggest(data, ctx, avoidKeys) {
+export function suggest(data, ctx, avoidKeys, opts = {}) {
   const home = ctx.occ === "maison";
   // une pièce réservée à la maison ne sort jamais
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
-  const items = data.items.filter((i) => !i.deleted && !i.dirty && (home || !homeOnly(i)));
+  const all = data.items.filter((i) => !i.deleted && !i.dirty && (home || !homeOnly(i)));
+  const items = all.filter((i) => i.cat !== "accessoire");
+  const accessories = all.filter((i) => i.cat === "accessoire");
   const fb = data.feedback || {};
   const disliked = new Set(Object.keys(fb).filter((k) => fb[k].v === -1));
   const liked = new Set(Object.keys(fb).filter((k) => fb[k].v === 1));
@@ -83,13 +85,13 @@ export function suggest(data, ctx, avoidKeys) {
     else if (it.cat === "chaussures") {
       if (w.rain || w.snow || cold < 6) s += wm >= 2 ? 1 : -2;
       else if (warm > 24) s += wm <= 2 ? 1 : -2;
-    } else s -= 1.8 * Math.abs(wm - baseTarget);
+    } else s -= (home ? 0.8 : 1.8) * Math.abs(wm - baseTarget);
 
     // saison
     if (it.seasons && it.seasons.length) s += it.seasons.includes(ctx.season) ? 1 : -4;
 
     // occasion
-    s += (it.occ || []).includes(ctx.occ) ? (home ? 3 : 2) : -3.5;
+    s += (it.occ || []).includes(ctx.occ) ? (home ? 3 : 2) : home ? -5 : -3.5;
 
     // pluie
     if (w.rain || w.snow) {
@@ -102,10 +104,16 @@ export function suggest(data, ctx, avoidKeys) {
     if (ctx.mood === "confort") { if (o.includes("quotidien") || o.includes("sport")) s += 1.2; if (o.includes("soiree") && !o.includes("quotidien")) s -= 1.2; }
     if (ctx.mood === "classe" || ctx.important) { if (o.includes("travail") || o.includes("soiree")) s += 1.5; if (o.includes("sport")) s -= 3; }
 
-    // rotation
-    const d = daysBetween(it.lastWorn, ctx.day);
-    if (d !== null && d < restDays) s -= 4 + (restDays - d);
-    else s += Math.min(d === null ? 21 : d, 21) * 0.12;
+    // rotation (désactivée pour la valise : on réutilise volontiers)
+    if (!opts.noRotation) {
+      const d = daysBetween(it.lastWorn, ctx.day);
+      if (d !== null && d < restDays) s -= 4 + (restDays - d);
+      else s += Math.min(d === null ? 21 : d, 21) * 0.12;
+    }
+    // valise : réutiliser ce qui est déjà dans la valise, éviter de remettre la même chose deux jours de suite
+    // (un bas ou une veste se remettent facilement, un haut beaucoup moins)
+    if (opts.packed && opts.packed.has(it.id)) s += { chaussures: 4, veste: 4, bas: 3, haut: 1.5, robe: 1.5 }[it.cat] || 2;
+    if (opts.prev && opts.prev.has(it.id)) s -= { haut: 6, robe: 6, bas: 2 }[it.cat] || 0;
     return s;
   };
 
@@ -156,7 +164,79 @@ export function suggest(data, ctx, avoidKeys) {
   // on varie seulement entre des tenues presque aussi bonnes que la meilleure
   const pool = cands.slice(0, 3).filter((c) => c.score >= cands[0].score - 3);
   const chosen = pool[Math.floor(Math.random() * pool.length)];
-  return { ...chosen, reasons: explain(chosen, ctx, { needJacket, layered, liked, pairScore }) };
+  const acc = home ? { pieces: [], reasons: [] } : pickAccessories(accessories, chosen.pieces, ctx, w, opts);
+  const reasons = explain(chosen, ctx, { needJacket, layered, liked, pairScore });
+  const popAcc = acc.pieces.some((a) => COLORS[a.color] && !COLORS[a.color][2]);
+  const base = popAcc ? reasons.filter((r) => !r.startsWith("Tout en tons neutres")) : reasons;
+  return { ...chosen, pieces: chosen.pieces.concat(acc.pieces), reasons: base.concat(acc.reasons) };
+}
+
+/** Ajoute 0 à 3 accessoires qui vont avec la tenue. */
+function pickAccessories(accs, pieces, ctx, w, opts) {
+  if (!accs.length) return { pieces: [], reasons: [] };
+  const cold = w.morning, warm = w.afternoon ?? w.morning;
+  const accents = new Set(pieces.map((p) => p.color).filter((c) => COLORS[c] && !COLORS[c][2]));
+  const score = (a) => {
+    let s = Math.random() * 0.6;
+    s += (a.occ || []).includes(ctx.occ) ? 2 : -3;
+    if (a.seasons && a.seasons.length) s += a.seasons.includes(ctx.season) ? 0.5 : -3;
+    const neutral = COLORS[a.color] && COLORS[a.color][2];
+    if (neutral) s += 0.5;
+    else if (accents.has(a.color)) s += 1.5;
+    else if (accents.size === 0) s += ctx.mood === "couleur" ? 2 : 0.5;
+    else s -= 3;
+    if (a.pattern === "motif" && pieces.some((p) => p.pattern === "motif")) s -= 3;
+    if ((w.rain || w.snow) && a.rain === "fragile") s -= 5;
+    if (!opts.noRotation) { const d = daysBetween(a.lastWorn, ctx.day); if (d !== null && d < 1) s -= 1; }
+    if (opts.packed && opts.packed.has(a.id)) s += 2;
+    return s;
+  };
+  const best = (type) => accs.filter((a) => a.acc === type).map((a) => ({ a, s: score(a) })).sort((x, y) => y.s - x.s)[0];
+  const out = [], why = [];
+  const warmNames = [];
+  const want = { echarpe: cold < 10, bonnet: cold < 5 || (w.snow), gants: cold < 3 };
+  for (const t of ["echarpe", "bonnet", "gants"]) {
+    if (!want[t]) continue;
+    const b = best(t); if (b && b.s > -3) { out.push(b.a); warmNames.push(b.a.name.toLowerCase()); }
+  }
+  if (warmNames.length) why.push(`Il fait ${Math.round(cold)}° ressentis le matin : ${warmNames.join(", ")}.`);
+  const sunny = !w.rain && !w.snow && warm >= 22;
+  if (sunny) {
+    const l = best("lunettes"); if (l && l.s > -1) out.push(l.a);
+    const h = accs.filter((a) => a.acc === "chapeau" && (a.warmth || 2) === 1).map((a) => ({ a, s: score(a) })).sort((x, y) => y.s - x.s)[0];
+    if (h && h.s > 0) out.push(h.a);
+  }
+  const extras = ["sac", "ceinture", "bijou"].map(best).filter((b) => b && b.s > 0.5).sort((x, y) => y.s - x.s);
+  for (const b of extras) {
+    if (out.length >= 4) break;
+    if (b.a.acc === "ceinture" && !pieces.some((p) => p.cat === "bas")) continue;
+    out.push(b.a);
+  }
+  const pop = out.find((a) => COLORS[a.color] && !COLORS[a.color][2] && accents.size === 0);
+  if (pop) why.push(`${pop.name} apporte la touche de couleur.`);
+  return { pieces: out, reasons: why };
+}
+
+/**
+ * Valise : une tenue par jour, en réutilisant au maximum les mêmes pièces.
+ * days : [{day, season, occ, w}]  →  {outfits:[{day, pieces, reasons}], packed:[items]}
+ */
+export function planTrip(data, days, base) {
+  const packed = new Set();
+  const outfits = [];
+  let prev = new Set();
+  const avoid = [];
+  for (const d of days) {
+    const ctx = { ...base, ...d, restDays: 0 };
+    const r = suggest(data, ctx, avoid, { noRotation: true, packed, prev });
+    if (!r) { outfits.push({ day: d.day, pieces: [], reasons: [] }); continue; }
+    r.pieces.forEach((p) => packed.add(p.id));
+    prev = new Set(r.pieces.map((p) => p.id));
+    avoid.push(r.key);
+    outfits.push({ day: d.day, pieces: r.pieces, reasons: r.reasons });
+  }
+  const byId = new Map(data.items.map((i) => [i.id, i]));
+  return { outfits, packed: [...packed].map((id) => byId.get(id)).filter(Boolean) };
 }
 
 function explain(c, ctx, info) {
@@ -204,7 +284,7 @@ function explain(c, ctx, info) {
 
 export function missingNote(items, ctx) {
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
-  const ok = items.filter((i) => !i.deleted && !i.dirty && (ctx.occ === "maison" || !homeOnly(i)));
+  const ok = items.filter((i) => !i.deleted && !i.dirty && i.cat !== "accessoire" && (ctx.occ === "maison" || !homeOnly(i)));
   const has = (c) => ok.some((i) => i.cat === c);
   const miss = [];
   if (!has("robe") && !has("haut")) miss.push("un haut");

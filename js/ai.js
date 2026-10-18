@@ -1,5 +1,5 @@
 // Styliste IA : demande une tenue à Claude à partir du dressing (texte seulement, aucune photo).
-import { COLORS, CATS, OCCS, SEASONS } from "./catalog.js";
+import { COLORS, CATS, OCCS, SEASONS, ACC_TYPES } from "./catalog.js";
 import { STYLES, STYLE_TAGS, MATERIALS } from "./styles.js";
 import { daysBetween } from "./engine.js";
 
@@ -41,7 +41,7 @@ const label = (list, id) => (list.find((x) => x.id === id) || {}).label || id;
 function describeItem(it, day) {
   const d = daysBetween(it.lastWorn, day);
   const parts = [
-    label(CATS, it.cat).toLowerCase(),
+    it.cat === "accessoire" ? "accessoire (" + label(ACC_TYPES, it.acc || "sac").toLowerCase() + ")" : label(CATS, it.cat).toLowerCase(),
     (COLORS[it.color] || ["?"])[0].toLowerCase(),
     it.pattern === "motif" ? "à motif" : "uni",
     ["", "léger", "épaisseur moyenne", "chaud"][it.warmth || 2],
@@ -71,6 +71,7 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked, disli
     "Tu es une styliste personnelle française, précise et bienveillante.",
     "Tu composes UNE tenue complète uniquement avec les pièces listées (identifiants entre crochets), jamais avec des pièces inventées.",
     "Une tenue = un haut et un bas, ou une robe ; des chaussures s'il y en a ; une veste ou un manteau si la météo le demande. Tu peux superposer deux hauts (ex. chemise sous un pull).",
+    "Ajoute un à trois accessoires listés (sac, écharpe, bonnet, ceinture, bijou…) quand ils complètent bien la tenue ou que le froid les demande.",
     "Respecte la météo, l'occasion, la saison et évite les pièces portées ces derniers jours.",
     "L'occasion « maison / travaux » désigne une tenue pour rester chez soi ou bricoler : confort avant tout, pièces de maison (pilou, vieux jean, sweat) bienvenues, pas besoin de manteau ni de style.",
     "Inspire-toi fortement des styles et créatrices aimés : explique en quoi la tenue leur ressemble, concrètement.",

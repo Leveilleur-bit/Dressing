@@ -1,6 +1,13 @@
 export const CATS = [
   { id: "haut", label: "Haut" }, { id: "bas", label: "Bas" }, { id: "robe", label: "Robe" },
-  { id: "veste", label: "Veste" }, { id: "chaussures", label: "Chaussures" }
+  { id: "veste", label: "Veste" }, { id: "chaussures", label: "Chaussures" },
+  { id: "accessoire", label: "Accessoire" }
+];
+
+export const ACC_TYPES = [
+  { id: "sac", label: "Sac" }, { id: "echarpe", label: "Écharpe" }, { id: "bonnet", label: "Bonnet" },
+  { id: "gants", label: "Gants" }, { id: "ceinture", label: "Ceinture" }, { id: "bijou", label: "Bijou / montre" },
+  { id: "chapeau", label: "Chapeau / casquette" }, { id: "lunettes", label: "Lunettes de soleil" }
 ];
 
 // [libellé, couleur, neutre ?, avec article]
@@ -50,7 +57,15 @@ export const GLYPH = {
   bas: "M18 6 H46 L50 58 H37 L32 24 L27 58 H14 Z",
   robe: "M24 6 H40 L42 18 L52 58 H12 L22 18 Z",
   veste: "M20 8 L8 16 L6 58 H27 L32 24 L37 58 H58 L56 16 L44 8 L32 24 Z",
-  chaussures: "M6 44 L6 30 Q12 27 18 31 Q28 40 44 40 Q58 41 58 50 V54 H6 Z"
+  chaussures: "M6 44 L6 30 Q12 27 18 31 Q28 40 44 40 Q58 41 58 50 V54 H6 Z",
+  accessoire: "M22 24 Q22 10 32 10 Q42 10 42 24 H38 Q38 14 32 14 Q26 14 26 24 Z M12 24 H52 L56 56 H8 Z",
+  acc_echarpe: "M12 10 H52 V24 Q42 31 32 31 Q22 31 12 24 Z M36 29 H47 L51 57 H40 Z",
+  acc_bonnet: "M12 44 Q12 15 32 15 Q52 15 52 44 Z M9 44 H55 V54 H9 Z M28 10 A4 4 0 1 0 36 10 A4 4 0 1 0 28 10 Z",
+  acc_gants: "M18 56 V32 L12 24 L16 21 L22 27 V13 Q22 9 26 9 Q30 9 30 13 V11 Q30 7 34 7 Q38 7 38 11 V13 Q38 9 42 9 Q46 9 46 13 V40 Q46 56 33 56 Z",
+  acc_ceinture: "M4 26 H60 V38 H4 Z M22 21 H40 V43 H22 Z M27 26 V38 H35 V26 Z",
+  acc_bijou: "M32 10 A22 22 0 1 0 32.01 10 Z M32 18 A14 14 0 1 1 31.99 18 Z",
+  acc_chapeau: "M5 44 Q32 53 59 44 Q59 37 48 37 Q48 17 32 17 Q16 17 16 37 Q5 37 5 44 Z",
+  acc_lunettes: "M4 25 H60 V30 H56 Q56 45 43 45 Q33 45 33 32 H31 Q31 45 21 45 Q8 45 8 30 H4 Z"
 };
 
 export function defaultSeasons(warmth) {

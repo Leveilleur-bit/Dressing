@@ -31,23 +31,20 @@ export function locate() {
 }
 
 
-/** Résumé de la journée (offset 0 = aujourd'hui, 1 = demain) */
-export async function fetchDay(lat, lon, offset) {
+async function fetchHourly(lat, lon, days) {
   const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon +
     "&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,weather_code" +
-    "&timezone=auto&forecast_days=3";
+    "&timezone=auto&forecast_days=" + days;
   const r = await fetch(url);
   if (!r.ok) throw new Error("weather");
-  const j = await r.json();
-  const h = j.hourly;
-  const base = h.time[0].slice(0, 10);
-  const d = new Date(base + "T12:00:00");
-  d.setDate(d.getDate() + offset);
-  const day = d.toISOString().slice(0, 10);
+  return (await r.json()).hourly;
+}
+
+function summarize(h, day) {
   const idx = (hour) => h.time.indexOf(day + "T" + String(hour).padStart(2, "0") + ":00");
   const range = [];
   for (let hr = 8; hr <= 20; hr++) { const i = idx(hr); if (i >= 0) range.push(i); }
-  if (!range.length) throw new Error("weather-range");
+  if (!range.length) return null;
   const at = (arr, hour) => { const i = idx(hour); return i >= 0 ? arr[i] : null; };
   const max = (arr) => Math.max(...range.map((i) => arr[i] ?? 0));
   const sum = (arr) => range.reduce((a, i) => a + (arr[i] || 0), 0);
@@ -58,8 +55,7 @@ export async function fetchDay(lat, lon, offset) {
   const rainProb = max(h.precipitation_probability);
   const rainMm = sum(h.precipitation);
   return {
-    day,
-    morning, afternoon,
+    day, morning, afternoon,
     minFeels: Math.min(...range.map((i) => h.apparent_temperature[i])),
     maxFeels: Math.max(...range.map((i) => h.apparent_temperature[i])),
     rainProb, rainMm: Math.round(rainMm * 10) / 10,
@@ -70,4 +66,23 @@ export async function fetchDay(lat, lon, offset) {
     sky: CODES[worst] || "",
     fetchedAt: Date.now()
   };
+}
+
+const days = (h) => [...new Set(h.time.map((t) => t.slice(0, 10)))];
+
+/** Aujourd'hui et demain, en une seule requête : [d0, d1] */
+export async function fetchTwoDays(lat, lon) {
+  const h = await fetchHourly(lat, lon, 3);
+  const [a, b] = days(h);
+  const d0 = summarize(h, a), d1 = summarize(h, b);
+  if (!d0 || !d1) throw new Error("weather-range");
+  return [d0, d1];
+}
+
+/** Prévisions sur 16 jours : { "2026-11-03": résumé, … } */
+export async function fetchRange(lat, lon) {
+  const h = await fetchHourly(lat, lon, 16);
+  const out = {};
+  for (const d of days(h)) { const s = summarize(h, d); if (s) out[d] = s; }
+  return out;
 }

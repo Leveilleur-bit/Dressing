@@ -87,7 +87,9 @@
       <h2>Mon dressing</h2>
       <span class="count" id="count"></span>
     </div>
+    <input type="search" id="search" placeholder="Rechercher : jean, rouge, pull…" autocomplete="off" aria-label="Rechercher dans le dressing">
     <div class="chips" id="cat-filter"></div>
+    <p class="hint" id="trier-hint" hidden>Pièces pas portées depuis 6 mois : à ressortir, donner ou vendre. Ouvre une pièce pour la supprimer du dressing.</p>
     <section class="laundry" id="laundry" hidden>
       <div class="outfit-head">
         <span class="label">Au sale</span>
@@ -106,6 +108,12 @@
     </div>
     <p class="hint">Note les jours qui comptent. Ce jour-là, l'appli choisit l'occasion toute seule et propose plus habillé si c'est important.</p>
     <div class="days" id="days"></div>
+    <div class="outfit-head" style="margin-top:8px">
+      <h2>Valises</h2>
+    </div>
+    <p class="hint">Indique une destination et des dates : l'appli regarde la météo sur place et prépare une tenue par jour en réutilisant au maximum les mêmes pièces.</p>
+    <div class="trips" id="trips"></div>
+    <button class="btn primary block" type="button" id="btn-new-trip">Préparer une valise</button>
     <div class="outfit-head" style="margin-top:8px">
       <h2>Déjà porté</h2>
     </div>
@@ -156,6 +164,14 @@
 
     <div class="outfit-head" style="margin-top:8px"><h2>Préférences</h2></div>
     <div class="group">
+      <span class="label">Occasion par défaut en semaine</span>
+      <div class="chips" id="wk-chips"></div>
+    </div>
+    <div class="group">
+      <span class="label">Occasion par défaut le week-end</span>
+      <div class="chips" id="we-chips"></div>
+    </div>
+    <div class="group">
       <span class="label">Pièces évitées après avoir été portées</span>
       <div class="chips" id="rest-chips"></div>
     </div>
@@ -192,15 +208,22 @@
       <input type="text" id="f-name" placeholder="ex. Chemise en lin bleue" maxlength="60" autocomplete="off">
     </div>
     <div class="group"><span class="label">Catégorie</span><div class="chips" id="f-cat"></div></div>
+    <div class="group" id="f-acc-group" hidden><span class="label">Type d'accessoire</span><div class="chips" id="f-acc"></div></div>
     <div class="group"><span class="label">Couleur principale</span><div class="swatches" id="f-color"></div></div>
-    <div class="group"><span class="label">Motif</span><div class="chips" id="f-pattern"></div></div>
-    <div class="group"><span class="label">Style de la pièce</span><div class="chips" id="f-style"></div></div>
-    <div class="group"><span class="label">Matière</span><div class="chips" id="f-mat"></div></div>
     <div class="group"><span class="label">Épaisseur</span><div class="chips" id="f-warm"></div></div>
-    <div class="group"><span class="label">Saisons</span><div class="chips" id="f-season"></div></div>
-    <div class="group"><span class="label">Pluie</span><div class="chips" id="f-rain"></div></div>
-    <div class="group"><span class="label">Se porte pour</span><div class="chips" id="f-occ"></div></div>
-    <div class="group"><span class="label">État</span><div class="chips" id="f-dirty"></div></div>
+    <details class="more" id="f-more">
+      <summary><span class="more-title">Plus de détails</span><span class="more-sum" id="f-summary"></span></summary>
+      <div class="more-body">
+        <p class="note small">Rempli tout seul d'après le nom, la catégorie et l'épaisseur. Corrige si besoin.</p>
+        <div class="group"><span class="label">Se porte pour</span><div class="chips" id="f-occ"></div></div>
+        <div class="group"><span class="label">Saisons</span><div class="chips" id="f-season"></div></div>
+        <div class="group"><span class="label">Motif</span><div class="chips" id="f-pattern"></div></div>
+        <div class="group"><span class="label">Matière</span><div class="chips" id="f-mat"></div></div>
+        <div class="group"><span class="label">Style de la pièce</span><div class="chips" id="f-style"></div></div>
+        <div class="group"><span class="label">Pluie</span><div class="chips" id="f-rain"></div></div>
+        <div class="group"><span class="label">État</span><div class="chips" id="f-dirty"></div></div>
+      </div>
+    </details>
     <p class="err" id="f-err" hidden></p>
     <div class="actions">
       <button class="btn danger" type="button" id="btn-del" hidden>Supprimer</button>
@@ -270,6 +293,49 @@
       <button class="btn primary" type="submit">Enregistrer</button>
     </div>
   </form>
+</div>
+
+<!-- ============ VALISE : FORMULAIRE ============ -->
+<div class="overlay" id="trip-overlay" hidden>
+  <form class="sheet" id="trip-form" novalidate>
+    <div class="sheet-head">
+      <h2>Nouvelle valise</h2>
+      <button class="x" type="button" id="trip-close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="group">
+      <label class="label" for="t-city">Destination</label>
+      <div class="row">
+        <input type="text" id="t-city" placeholder="ex. Lisbonne" autocomplete="off">
+        <button class="btn" type="button" id="t-city-btn">Chercher</button>
+      </div>
+      <div class="chips" id="t-city-results"></div>
+      <p class="note" id="t-dest"></p>
+    </div>
+    <div class="row">
+      <div class="group" style="flex:1">
+        <label class="label" for="t-start">Départ</label>
+        <input type="date" id="t-start">
+      </div>
+      <div class="group" style="flex:1">
+        <label class="label" for="t-len">Nombre de jours</label>
+        <input type="number" id="t-len" min="1" max="21" value="4" inputmode="numeric">
+      </div>
+    </div>
+    <div class="group"><span class="label">Occasion principale</span><div class="chips" id="t-occ"></div></div>
+    <div class="group"><span class="label">Prévoir aussi une tenue pour</span><div class="chips" id="t-extra"></div></div>
+    <div class="group">
+      <span class="label">Climat attendu</span>
+      <div class="chips" id="t-climate"></div>
+      <span class="note small">Utilisé pour les jours trop lointains : la météo n'est connue que 15 jours à l'avance.</span>
+    </div>
+    <p class="err" id="t-err" hidden></p>
+    <button class="btn primary block" type="submit" id="btn-trip-save">Préparer la valise</button>
+  </form>
+</div>
+
+<!-- ============ VALISE : DÉTAIL ============ -->
+<div class="overlay" id="tripview-overlay" hidden>
+  <div class="sheet" id="tripview"></div>
 </div>
 
 <div class="toast" id="toast" role="status" hidden></div>
