@@ -251,7 +251,8 @@ input[type="date"], input[type="number"] { width: 100%; font: inherit; padding: 
 .fl-cut img { filter: drop-shadow(0 3px 5px rgba(0, 0, 0, .14)); }
 .fl-photo img { object-fit: cover; border-radius: 10px; box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
 .fl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.fl-list li { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; }
+.fl-list li { display: flex; gap: 10px; align-items: baseline; }
+.fl-list li .piece-name { flex: 1; min-width: 0; }
 .fl-list .tag { justify-self: start; }
 .fl-list .piece-name { font-size: .92rem; }
 .fl-list .piece-meta { font-size: .78rem; text-align: right; }
@@ -271,3 +272,11 @@ input[type="date"], input[type="number"] { width: 100%; font: inherit; padding: 
 .week-days { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .week-day { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .week-day .label { text-transform: capitalize; }
+
+/* tenue portée */
+.btn.primary.done { background: var(--good); border-color: var(--good); color: var(--surface); }
+.stamp { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; background: var(--good); color: var(--surface); padding: 4px 8px; border-radius: 6px; }
+.outfit.is-worn { border-color: var(--good); box-shadow: 0 0 0 1px var(--good); }
+.worn-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 12px; background: var(--bg); }
+.worn-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: .92rem; }
+.fl-list li, .fl-list .piece-name { text-align: left; }

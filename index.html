@@ -62,9 +62,10 @@
       <div class="chips" id="mood-chips"></div>
     </div>
 
-    <section class="outfit" aria-live="polite">
+    <section class="outfit" id="outfit-card" aria-live="polite">
       <div class="outfit-head">
         <h2 id="outfit-title">Tenue du jour</h2>
+        <span class="stamp" id="worn-stamp" hidden></span>
         <span class="label" id="ctx-label"></span>
       </div>
       <div class="lay" id="lay"></div>
@@ -76,6 +77,7 @@
       </div>
       <button class="btn block" id="btn-ai" type="button">Demander à la styliste</button>
       <button class="btn primary block" id="btn-wear" type="button">Je la porte</button>
+      <div class="worn-box" id="worn-box" hidden></div>
       <p class="note" id="outfit-msg" hidden></p>
     </section>
 

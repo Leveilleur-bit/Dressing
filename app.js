@@ -9,7 +9,7 @@ import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
 import { askStylist, testKey, AiError } from "./js/ai.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.4.0";
+const VERSION = "1.4.1";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -258,13 +258,43 @@ function renderOutfit() {
   lay.innerHTML = flatlay(pieces) +
     '<ul class="fl-list">' + pieces.map((p) => '<li><span class="tag">' + esc(catLabel(p)) + '</span><span class="piece-name">' + esc(p.name) + '</span><span class="piece-meta">' + wornText(p) + "</span></li>").join("") + "</ul>";
   hydratePhotos(lay);
-  const lines = current.reasons.slice();
+  const worn = wornEntry(c);
+  // une fois portée, les remarques « pas encore porté » n'ont plus de sens
+  let lines = current.reasons.slice();
+  if (worn) lines = lines.filter((l) => !/pas encore porté|pas porté depuis|n'a encore jamais/.test(l));
   if (current.tip) lines.push("Astuce : " + current.tip);
-  const note = current.ai ? "" : missingNote(liveItems(), c);
+  const note = current.ai || worn ? "" : missingNote(liveItems(), c);
   if (note) lines.push(note);
   why.innerHTML = lines.map((l) => "<li>" + esc(l) + "</li>").join("");
+  why.hidden = !lines.length;
   const fb = (data().feedback || {})[current.key];
   $("btn-like").setAttribute("aria-pressed", !!(fb && fb.v === 1));
+  renderWorn(worn, c);
+}
+
+/** L'entrée d'historique correspondant à la tenue affichée, pour le jour affiché. */
+function wornEntry(c) {
+  if (!current) return null;
+  const k = comboKey(current.pieces);
+  return (data().history || []).find((h) => !h.deleted && h.day === c.day && comboKey(h.items.map((id) => ({ id }))) === k) || null;
+}
+
+function renderWorn(worn, c) {
+  const btn = $("btn-wear"), box = $("worn-box");
+  const when = dayOffset === 0 ? "aujourd'hui" : "demain";
+  btn.classList.toggle("done", !!worn);
+  btn.setAttribute("aria-pressed", !!worn);
+  btn.textContent = worn ? "✓ Tenue portée " + when : "Je la porte";
+  $("outfit-card").classList.toggle("is-worn", !!worn);
+  $("worn-stamp").hidden = !worn;
+  $("worn-stamp").textContent = "✓ Portée " + when;
+  if (!worn) { box.hidden = true; return; }
+  const byId = new Map(liveItems().map((i) => [i.id, i]));
+  const pieces = current.pieces.map((p) => byId.get(p.id) || p);
+  box.innerHTML = '<div class="worn-head"><span>Enregistrée dans ton historique.</span><button type="button" class="link" id="btn-unwear">Annuler</button></div>' +
+    '<span class="label">Ce soir, tu mets au sale ?</span>' +
+    '<div class="chips">' + pieces.map((p) => '<button type="button" class="chip" data-dirty="' + esc(p.id) + '" aria-pressed="' + !!p.dirty + '">' + (p.dirty ? "✓ " : "") + esc(p.name) + (p.dirty ? " · au sale" : "") + "</button>").join("") + "</div>";
+  box.hidden = false;
 }
 
 function newSuggestion(reset) {
@@ -287,7 +317,7 @@ function newSuggestion(reset) {
 function refreshOutfit() {
   if (!current || ctxKey(context()) !== lastCtxKey) return newSuggestion(true);
   const map = new Map(liveItems().map((i) => [i.id, i]));
-  if (current.pieces.every((p) => map.has(p.id) && (!map.get(p.id).dirty || current.key === wornKey))) {
+  if (current.pieces.every((p) => map.has(p.id) && (!map.get(p.id).dirty || current.key === wornKey || wornEntry(context())))) {
     current = { ...current, pieces: current.pieces.map((p) => map.get(p.id)) };
     renderOutfit();
   } else newSuggestion(false);
@@ -299,14 +329,16 @@ function wearCurrent() {
   if (isDemo()) { msg.textContent = "C'est le dressing d'exemple : connecte ton dépôt pour suivre ce que tu portes."; msg.hidden = false; return; }
   const c = context();
   const ids = current.pieces.map((p) => p.id);
-  const already = (data().history || []).some((h) => !h.deleted && h.day === c.day && comboKey(h.items.map((id) => ({ id }))) === comboKey(current.pieces));
-  if (already) { toast("Cette tenue est déjà notée pour " + (dayOffset === 0 ? "aujourd'hui." : "demain.")); return; }
+  if (wornEntry(c)) return; // déjà enregistrée : le bouton affiche « ✓ Tenue portée »
   wornKey = current.key;
   sync.change((d) => { d.history.unshift({ id: uid(), day: c.day, items: ids, t: Date.now() }); });
-  const worn = current.pieces;
-  msg.innerHTML = "Noté pour " + (dayOffset === 0 ? "aujourd'hui" : "demain") + ". Ce soir, tu mets quelque chose au sale ?" +
-    '<span class="chips" style="margin-top:8px">' + worn.map((p) => '<button type="button" class="chip" data-dirty="' + esc(p.id) + '" aria-pressed="false">' + esc(p.name) + "</button>").join("") + "</span>";
-  msg.hidden = false;
+  toast("✓ Tenue enregistrée pour " + (dayOffset === 0 ? "aujourd'hui" : "demain"));
+  if (navigator.vibrate) { try { navigator.vibrate(30); } catch (e) {} }
+}
+function unwearCurrent() {
+  const e = wornEntry(context()); if (!e) return;
+  sync.change((d) => { const h = d.history.find((x) => x.id === e.id); if (h) { h.deleted = true; h.t = Date.now(); } });
+  toast("Annulé : la tenue n'est plus notée.");
 }
 
 
@@ -1045,11 +1077,8 @@ function bind() {
     toast("Noté : cette tenue ne te sera plus proposée.");
     newSuggestion(false);
   });
-  delegate("outfit-msg", "dirty", (id, b) => {
-    const val = b.getAttribute("aria-pressed") !== "true";
-    b.setAttribute("aria-pressed", val);
-    setDirty(id, val);
-  });
+  delegate("worn-box", "dirty", (id, b) => { setDirty(id, b.getAttribute("aria-pressed") !== "true"); });
+  on("worn-box", "click", (e) => { if (e.target.id === "btn-unwear") unwearCurrent(); });
   on("btn-connect", "click", () => openProfile(null));
 
   delegate("cat-filter", "f", (f) => { catFilter = f; renderWardrobe(); });
