@@ -9,7 +9,7 @@ import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
 import { askStylist, testKey, AiError } from "./js/ai.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.4.1";
+const VERSION = "1.4.2";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -298,24 +298,82 @@ function renderWorn(worn, c) {
 }
 
 function newSuggestion(reset) {
-  const c = context();
+  let c = context();
   const k = ctxKey(c);
   if (reset || k !== lastCtxKey) seen = [];
   lastCtxKey = k;
   wornKey = null; $("outfit-msg").hidden = true;
   if (!seen.length) {
+    // à la première ouverture du jour sur cet appareil, on reprend aussi l'occasion et l'envie choisies
+    const p = (data().picks || {})[c.day];
+    const hk = (sync ? sync.profile.id : "demo") + "/" + c.day;
+    if (p && !p.deleted && !honored.has(hk)) {
+      honored.add(hk);
+      if (p.occ && p.occ !== c.occ) occOverride[c.day] = p.occ;
+      mood = p.mood || "";
+      c = context(); lastCtxKey = ctxKey(c); renderControls();
+    }
+    const kept = restoreFor(c);
+    if (kept) { current = kept; seen.push(kept.key); renderOutfit(); return; }
     const wk = weekOutfitFor(c);
-    if (wk) { current = wk; seen.push(wk.key); renderOutfit(); return; }
+    if (wk) { current = wk; seen.push(wk.key); renderOutfit(); savePick(c); return; }
   }
   const items = liveItems();
   current = suggest({ items, feedback: data().feedback }, c, seen);
-  if (current) { seen.push(current.key); if (seen.length > 10) seen.shift(); }
+  if (current) { seen.push(current.key); if (seen.length > 10) seen.shift(); savePick(c); }
   renderOutfit();
+}
+
+// ---------------- tenue retenue pour le jour ----------------
+// La tenue proposée est enregistrée : elle reste la même quand on ferme et rouvre l'appli,
+// et sur tous les appareils, jusqu'à ce qu'on demande « Autre idée » ou qu'on change d'occasion.
+const honored = new Set();
+/** Tenue incomplète alors que le dressing permettrait mieux (ex. choisie quand il n'y avait qu'un pull). */
+function incomplete(pieces, c) {
+  const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
+  const avail = liveItems().filter((i) => !i.dirty && (c.occ === "maison" || !homeOnly(i)));
+  const can = (cat) => avail.some((i) => i.cat === cat);
+  const has = (cat) => pieces.some((p) => p.cat === cat);
+  const baseOk = has("robe") || (has("haut") && has("bas")) || (!can("robe") && !(can("haut") && can("bas")));
+  const shoesOk = has("chaussures") || !can("chaussures");
+  return !(baseOk && shoesOk);
+}
+function restoreFor(c) {
+  const byId = new Map(liveItems().map((i) => [i.id, i]));
+  const p = (data().picks || {})[c.day];
+  const usable = (ids, allowDirty) => { const ps = ids.map((id) => byId.get(id)); return ps.every((x) => x && (allowDirty || !x.dirty)) ? ps : null; };
+  // 1. une tenue déjà notée « portée » ce jour-là
+  const h = (data().history || []).filter((x) => !x.deleted && x.day === c.day).sort((a, b) => (b.t || 0) - (a.t || 0))[0];
+  if (h) {
+    const ps = usable(h.items, true);
+    if (ps) {
+      const same = p && !p.deleted && comboKey(p.ids.map((id) => ({ id }))) === comboKey(h.items.map((id) => ({ id })));
+      return { key: comboKey(ps.filter((x) => x.cat !== "accessoire")), pieces: ps, reasons: same ? p.reasons || [] : [], tip: same ? p.tip : "", title: same ? p.title : "", ai: same && p.ai, week: same && p.week };
+    }
+  }
+  // 2. la tenue proposée plus tôt pour ce jour, si l'occasion et l'envie n'ont pas changé
+  if (p && !p.deleted && p.occ === c.occ && (p.mood || "") === (c.mood || "")) {
+    const ps = usable(p.ids, false);
+    if (ps && !incomplete(ps, c)) return { key: comboKey(ps.filter((x) => x.cat !== "accessoire")), pieces: ps, reasons: p.reasons || [], tip: p.tip || "", title: p.title || "", ai: !!p.ai, week: !!p.week };
+  }
+  return null;
+}
+function savePick(c) {
+  if (!current) return;
+  if (sync && !sync.loaded) return; // on attend d'avoir les données à jour avant d'écrire
+  const pick = { ids: current.pieces.map((p) => p.id), occ: c.occ, mood: c.mood || "", reasons: current.reasons || [], tip: current.tip || "", title: current.title || "", ai: !!current.ai, week: !!current.week, t: Date.now() };
+  const limit = addDays(dayStr(0), -7);
+  mutate((d) => {
+    d.picks = d.picks || {};
+    d.picks[c.day] = pick;
+    for (const k of Object.keys(d.picks)) if (k < limit) delete d.picks[k];
+  });
 }
 
 /** Garde la tenue affichée si ses pièces existent toujours, sinon en propose une autre. */
 function refreshOutfit() {
   if (!current || ctxKey(context()) !== lastCtxKey) return newSuggestion(true);
+  if (!wornEntry(context()) && incomplete(current.pieces, context())) return newSuggestion(true);
   const map = new Map(liveItems().map((i) => [i.id, i]));
   if (current.pieces.every((p) => map.has(p.id) && (!map.get(p.id).dirty || current.key === wornKey || wornEntry(context())))) {
     current = { ...current, pieces: current.pieces.map((p) => map.get(p.id)) };
@@ -360,6 +418,7 @@ async function askAi() {
     const pieces = r.ids.map((id) => byId.get(id));
     current = { key: comboKey(pieces), pieces, reasons: r.why, tip: r.tip, title: r.title, ai: true };
     seen.push(current.key);
+    savePick(c);
     wornKey = null; msg.hidden = true;
     renderOutfit();
   } catch (e) {
@@ -543,7 +602,12 @@ async function weekAction(act, b) {
     if (!liveItems().length) { toast("Ajoute d'abord des vêtements à ton dressing."); return; }
     b.disabled = true; b.textContent = "Préparation…";
     const plan = await computeWeek();
-    mutate((d) => { d.week = plan; });
+    mutate((d) => {
+      d.week = plan;
+      // les tenues prévues remplacent celles déjà retenues pour ces jours
+      d.picks = d.picks || {};
+      for (const o of plan.outfits) if (d.picks[o.day]) d.picks[o.day] = { deleted: true, t: Date.now() };
+    });
     current = null; seen = [];
     toast("Ta semaine est prête.");
   }
@@ -751,7 +815,7 @@ function activate(id) {
   sync = null; doc = null;
   const p = getProfiles().find((x) => x.id === id);
   setActiveId(p ? p.id : null);
-  current = null; seen = [];
+  current = null; seen = []; pickReady = !!(p && LS.get("dressing:data:" + p.id, null));
   if (p) {
     sync = new Sync(p, { onData: (d) => { doc = d; renderAfterData(); }, onStatus });
     doc = sync.doc;
@@ -760,7 +824,9 @@ function activate(id) {
   renderAll();
 }
 let dataTimer = null;
+let pickReady = false;
 function renderAfterData() {
+  if (!pickReady && sync && sync.loaded) { pickReady = true; current = null; seen = []; }
   clearTimeout(dataTimer);
   dataTimer = setTimeout(() => { refreshOutfit(); renderWardrobe(); renderAgenda(); renderControls(); renderSettings(); }, 30);
 }

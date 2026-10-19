@@ -46,6 +46,7 @@ export function merge(local, remote) {
     feedback: mergeMap(remote.feedback, local.feedback),
     agenda: mergeMap(remote.agenda, local.agenda),
     trips: mergeMap(remote.trips, local.trips),
+    picks: mergeMap(remote.picks, local.picks),
     week: ((local.week && local.week.t) || 0) > ((remote.week && remote.week.t) || 0) ? local.week : remote.week || null,
     prefs: ((local.prefs && local.prefs.t) || 0) > ((remote.prefs && remote.prefs.t) || 0) ? local.prefs : remote.prefs || emptyDoc().prefs
   };
