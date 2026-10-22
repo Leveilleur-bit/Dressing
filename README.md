@@ -25,6 +25,7 @@ Et aussi :
 - **Que porter avec… ?** : depuis la fiche d'une pièce, 4 tenues construites autour d'elle ;
 - **Mes tenues** : les tenues que tu composes toi-même, celles que tu aimes et celles que tu gardes, à porter en un geste ;
 - **les pièces qui manquent** : les pièces de base qui ajouteraient le plus de tenues, et la progression du dressing par paliers ;
+- la **marque** de chaque pièce, avec un filtre par marque ; une pièce d'une créatrice choisie dans « Mon style » compte dans ce style ;
 - la tenue présentée en **flat lay** (haut, veste qui chevauche, bas, chaussures, sac), et la **garde-robe de la semaine** : une planche avec les pièces de la semaine et une tenue prévue pour chaque jour.
 
 ## Où sont les données
@@ -73,7 +74,13 @@ Sur un appareil partagé, on peut ajouter les deux profils et passer de l'un à 
 2. Crée une clé API (**API Keys → Create Key**).
 3. Dans l'appli : **Réglages → Styliste IA**, colle la clé, puis **Vérifier et enregistrer**.
 
-La styliste reçoit la liste écrite des vêtements, la météo et les styles choisis, jamais les photos. Elle coûte environ 1 centime par demande.
+La même clé sert à trois choses, chacune à environ 1 centime :
+
+- **Demander à la styliste** une tenue : elle reçoit la liste écrite des vêtements, la météo et les styles choisis, sans photo ;
+- **Reconnaître le vêtement** : la photo détourée du vêtement est envoyée pour remplir la fiche (nom, catégorie, couleur, matière, saisons…) ; c'est automatique quand on ajoute une photo et que le nom est encore vide ;
+- **Photographier l'étiquette** : la photo de l'étiquette est envoyée pour lire la marque, la taille, la composition et l'entretien ; elle n'est pas conservée.
+
+Sans clé, la couleur et le motif sont quand même détectés sur le téléphone à partir de la photo.
 
 ## Si un téléphone est perdu
 

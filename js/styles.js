@@ -238,12 +238,22 @@ const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-
 const hasWord = (name, list) => list.some((w) => name.includes(w));
 
 /** Note d'une tenue pour les styles choisis. Renvoie {score, reasons}. */
+const brandKey = (x) => norm(x).replace(/maison|&|\bet\b|[^a-z0-9]/g, "");
+/** La marque d'une pièce correspond-elle à ce profil de créatrice ? */
+export function brandMatches(brand, profile) {
+  if (!brand || profile.kind !== "createur") return false;
+  const a = brandKey(brand), b = brandKey(profile.name);
+  return a.length > 1 && b.length > 1 && (a === b || a.includes(b) || b.includes(a));
+}
+
 export function styleScore(pieces, styleIds, COLORS) {
   const profiles = STYLES.filter((s) => styleIds.includes(s.id));
   if (!profiles.length) return { score: 0, reasons: [] };
   let total = 0; const reasons = [];
   for (const p of profiles) {
     let s = 0;
+    const own = pieces.filter((it) => brandMatches(it.brand, p));
+    if (own.length) { s += 2.2 * own.length; reasons.push(own.length > 1 ? `${own.length} pièces ${p.name}, dans ton style.` : `${own[0].name} : pièce ${p.name}, dans ton style.`); }
     for (const it of pieces) {
       const name = norm(it.name);
       if (p.colors.love.includes(it.color) || (p.colors.accent || []).includes(it.color)) s += 0.6;

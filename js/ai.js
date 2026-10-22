@@ -50,7 +50,8 @@ function describeItem(it, day) {
     "saisons " + (it.seasons || []).map((s) => label(SEASONS, s).toLowerCase()).join("/"),
     "occasions " + (it.occ || []).map((o) => label(OCCS, o).toLowerCase()).join("/"),
     it.rain === "impermeable" ? "imperméable" : it.rain === "fragile" ? "craint la pluie" : null,
-    d === null ? "jamais porté" : d <= 0 ? "porté aujourd'hui" : "porté il y a " + d + " j"
+    it.brand ? "marque " + it.brand : null,
+        d === null ? "jamais porté" : d <= 0 ? "porté aujourd'hui" : "porté il y a " + d + " j"
   ].filter(Boolean);
   return `- [${it.id}] ${it.name} : ${parts.join(", ")}`;
 }
@@ -108,4 +109,109 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked, disli
     why: (Array.isArray(out.pourquoi) ? out.pourquoi : [out.pourquoi]).filter(Boolean).map(String).slice(0, 5),
     tip: out.conseil ? String(out.conseil) : ""
   };
+}
+
+// ---------------- reconnaissance par photo ----------------
+async function toJpegB64(blob, max = 900) {
+  const bmp = window.createImageBitmap ? await createImageBitmap(blob) : await new Promise((res, rej) => { const u = URL.createObjectURL(blob); const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = u; });
+  const r = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * r); c.height = Math.round(bmp.height * r);
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, c.width, c.height); // fond blanc sous une photo détourée
+  ctx.drawImage(bmp, 0, 0, c.width, c.height);
+  const out = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.85));
+  const buf = new Uint8Array(await out.arrayBuffer());
+  let s = ""; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+async function askVision(key, blob, system, text) {
+  const data = await toJpegB64(blob);
+  const j = await call(key, {
+    model: AI_MODEL, max_tokens: 700, system,
+    messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data } }, { type: "text", text }] }]
+  });
+  const t = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+  const m = t.match(/\{[\s\S]*\}/);
+  if (!m) throw new AiError("format", "Réponse illisible");
+  try { return JSON.parse(m[0]); } catch (e) { throw new AiError("format", "Réponse illisible"); }
+}
+
+const ids = (list) => list.map((x) => x.id).join(", ");
+
+/** Reconnaît un vêtement sur une photo et remplit la fiche. */
+export async function recognizeItem(key, blob) {
+  const system = "Tu catalogues des vêtements pour un dressing en ligne. Tu réponds uniquement en JSON strict, en français, sans texte autour.";
+  const text = [
+    "Décris ce vêtement (ou accessoire) photographié.",
+    "Réponds avec ce JSON, en utilisant UNIQUEMENT les valeurs proposées entre crochets :",
+    "{",
+    '"nom": "nom court et précis, 2 à 5 mots, ex. « Cardigan en grosse maille écru »",',
+    `"categorie": [${ids(CATS)}],`,
+    `"accessoire": [${ids(ACC_TYPES)}] ou null,`,
+    `"couleur": [${Object.keys(COLORS).join(", ")}],`,
+    '"motif": ["uni", "motif"],',
+    `"matiere": [${ids(MATERIALS)}] ou null,`,
+    '"epaisseur": [1 = léger, 2 = moyen, 3 = chaud],',
+    `"saisons": liste parmi [${ids(SEASONS)}],`,
+    `"occasions": liste parmi [${ids(OCCS)}],`,
+    `"styles": liste de 0 à 2 parmi [${ids(STYLE_TAGS)}],`,
+    '"pluie": ["normal", "impermeable", "fragile"] (fragile = daim, soie, toile claire…),',
+    '"marque": la marque seulement si un logo ou une étiquette est lisible sur la photo, sinon null',
+    "}",
+    "Si la photo ne montre pas un vêtement, réponds {\"erreur\": \"pas un vêtement\"}."
+  ].join("\n");
+  const r = await askVision(key, blob, system, text);
+  if (r.erreur) throw new AiError("notcloth", r.erreur);
+  const one = (v, list) => (list.some((x) => (x.id ?? x) === v) ? v : null);
+  const many = (v, list) => (Array.isArray(v) ? v.filter((x) => list.some((y) => y.id === x)) : []);
+  return {
+    name: typeof r.nom === "string" ? r.nom.slice(0, 60) : "",
+    cat: one(r.categorie, CATS),
+    acc: one(r.accessoire, ACC_TYPES),
+    color: Object.keys(COLORS).includes(r.couleur) ? r.couleur : null,
+    pattern: r.motif === "motif" ? "motif" : r.motif === "uni" ? "uni" : null,
+    material: one(r.matiere, MATERIALS),
+    warmth: [1, 2, 3].includes(+r.epaisseur) ? +r.epaisseur : null,
+    seasons: many(r.saisons, SEASONS),
+    occ: many(r.occasions, OCCS),
+    styles: many(r.styles, STYLE_TAGS).slice(0, 2),
+    rain: ["normal", "impermeable", "fragile"].includes(r.pluie) ? r.pluie : null,
+    brand: typeof r.marque === "string" && r.marque.trim() ? r.marque.trim().slice(0, 40) : null
+  };
+}
+
+/** Lit une étiquette : marque, taille, composition, entretien. */
+export async function readLabel(key, blob) {
+  const system = "Tu lis des étiquettes de vêtements. Tu réponds uniquement en JSON strict, en français, sans texte autour. Tu n'inventes rien : ce qui n'est pas lisible vaut null.";
+  const text = [
+    "Lis cette étiquette de vêtement et réponds avec ce JSON :",
+    "{",
+    '"marque": "nom de la marque" ou null,',
+    '"taille": "taille telle qu\'écrite (ex. M, 38, 42 EU)" ou null,',
+    '"composition": [{"matiere": "laine", "pourcentage": 70}, …] (traduire en français, matière principale d\'abord) ou [],',
+    '"entretien": ["Lavage à 30°", "Pas de sèche-linge", …] (traduire les symboles en phrases courtes) ou []',
+    "}",
+    "Si ce n'est pas une étiquette lisible, réponds {\"erreur\": \"étiquette illisible\"}."
+  ].join("\n");
+  const r = await askVision(key, blob, system, text);
+  if (r.erreur) throw new AiError("unreadable", r.erreur);
+  const comp = Array.isArray(r.composition) ? r.composition.filter((c) => c && c.matiere).map((c) => ({ m: String(c.matiere).toLowerCase(), p: +c.pourcentage || null })) : [];
+  return {
+    brand: typeof r.marque === "string" && r.marque.trim() ? r.marque.trim().slice(0, 40) : null,
+    size: typeof r.taille === "string" && r.taille.trim() ? r.taille.trim().slice(0, 20) : null,
+    composition: comp,
+    care: Array.isArray(r.entretien) ? r.entretien.filter((x) => typeof x === "string").map((x) => x.slice(0, 60)).slice(0, 8) : []
+  };
+}
+
+/** Composition → matière de la fiche + épaisseur conseillée. */
+export function materialFromComposition(comp) {
+  if (!comp || !comp.length) return {};
+  const main = comp[0].m;
+  const map = [["cachemire", "maille"], ["mohair", "maille"], ["alpaga", "maille"], ["laine", "laine"], ["lin", "lin"], ["soie", "soie"], ["cuir", "cuir"], ["daim", "daim"], ["velours", "velours"], ["coton", "coton"], ["polyester", "technique"], ["polyamide", "technique"], ["nylon", "technique"], ["élasthanne", "technique"], ["viscose", "soie"]];
+  const hit = map.find(([w]) => main.includes(w));
+  const wool = comp.filter((c) => /laine|cachemire|mohair|alpaga/.test(c.m)).reduce((a, c) => a + (c.p || 0), 0);
+  return { material: hit ? hit[1] : null, warmth: wool >= 50 ? 3 : main.includes("lin") ? 1 : null };
 }

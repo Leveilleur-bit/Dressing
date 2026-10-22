@@ -307,3 +307,8 @@ input[type="date"], input[type="number"] { width: 100%; font: inherit; padding: 
 .with-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .with-item .actions { gap: 6px; }
 .small-btn { padding: 8px 6px; font-size: .85rem; }
+
+/* reconnaissance */
+.ai-btn { border-color: var(--accent); color: var(--accent); }
+.ai-btn:disabled { opacity: .7; }
+.brands .chip { font-size: .85rem; padding: 6px 11px; }

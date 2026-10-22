@@ -103,6 +103,7 @@
       <section class="gaps" id="gaps" hidden></section>
       <input type="search" id="search" placeholder="Rechercher : jean, rouge, pull…" autocomplete="off" aria-label="Rechercher dans le dressing">
       <div class="chips" id="cat-filter"></div>
+      <div class="chips brands" id="brand-chips" hidden></div>
       <p class="hint" id="trier-hint" hidden>Pièces pas portées depuis 6 mois : à ressortir, donner ou vendre. Ouvre une pièce pour la supprimer du dressing.</p>
       <section class="laundry" id="laundry" hidden>
         <div class="outfit-head">
@@ -228,11 +229,20 @@
         <span class="note small" id="photo-status">Photo prise ici : rien n'est gardé dans ton album.</span>
         <div class="chips" id="f-cutmode" hidden></div>
         <button class="btn" type="button" id="btn-cut" hidden>Détourer la photo</button>
+        <button class="btn ai-btn" type="button" id="btn-recognize" hidden>✨ Reconnaître le vêtement</button>
+        <button class="btn" type="button" id="btn-label" hidden>Photographier l'étiquette</button>
+        <input class="visually-hidden" type="file" id="f-label-file" accept="image/*">
+        <span class="note small" id="ai-hint" hidden>Avec la clé de la styliste (Réglages), l'appli peut reconnaître le vêtement et lire son étiquette.</span>
       </div>
     </div>
     <div class="group">
       <label class="label" for="f-name">Nom</label>
       <input type="text" id="f-name" placeholder="ex. Chemise en lin bleue" maxlength="60" autocomplete="off">
+    </div>
+    <div class="group">
+      <label class="label" for="f-brand">Marque (facultatif)</label>
+      <input type="text" id="f-brand" list="brand-list" placeholder="ex. Barnie, Sézane…" maxlength="40" autocomplete="off">
+      <datalist id="brand-list"></datalist>
     </div>
     <div class="group"><span class="label">Catégorie</span><div class="chips" id="f-cat"></div></div>
     <div class="group" id="f-acc-group" hidden><span class="label">Type d'accessoire</span><div class="chips" id="f-acc"></div></div>
@@ -249,6 +259,11 @@
         <div class="group"><span class="label">Style de la pièce</span><div class="chips" id="f-style"></div></div>
         <div class="group"><span class="label">Pluie</span><div class="chips" id="f-rain"></div></div>
         <div class="group"><span class="label">État</span><div class="chips" id="f-dirty"></div></div>
+        <div class="row">
+          <div class="group" style="flex:1"><label class="label" for="f-size">Taille</label><input type="text" id="f-size" maxlength="20" placeholder="ex. M, 38" autocomplete="off"></div>
+        </div>
+        <div class="group"><label class="label" for="f-comp">Composition</label><input type="text" id="f-comp" maxlength="120" placeholder="ex. 70 % laine, 30 % polyamide" autocomplete="off"></div>
+        <div class="group"><label class="label" for="f-care">Entretien</label><input type="text" id="f-care" maxlength="200" placeholder="ex. Lavage à 30° · Pas de sèche-linge" autocomplete="off"></div>
       </div>
     </details>
     <button class="btn block" type="button" id="btn-with" hidden>Que porter avec ?</button>

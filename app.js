@@ -7,10 +7,11 @@ import { Repo, parseRepo } from "./js/github.js";
 import { fetchTwoDays, fetchRange, searchCity, locate } from "./js/weather.js";
 import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.js";
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
-import { askStylist, testKey, AiError } from "./js/ai.js";
+import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromComposition } from "./js/ai.js";
+import { detectColor } from "./js/colorid.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.5.0";
+const VERSION = "1.6.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -461,13 +462,16 @@ function renderWardrobe() {
   $("laundry-row").innerHTML = dirty.map((it) => '<button type="button" class="laundry-item" data-clean="' + esc(it.id) + '">' + thumb(it) +
     '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">Lavé</span><span class="note small">Propre seul dans ' + it.cleanIn + " j</span></button>").join("");
   const q = normTxt(search.trim());
+  const brands = brandsList();
+  $("brand-chips").hidden = brands.length < 2;
+  $("brand-chips").innerHTML = brands.slice(0, 12).map(([b, n]) => '<button type="button" class="chip" data-brand="' + esc(b) + '" aria-pressed="' + (q && normTxt(b) === q) + '">' + esc(b) + "<small>" + n + "</small></button>").join("");
   $("trier-hint").hidden = catFilter !== "trier";
-  const list = all.filter((i) => inFilter(i, catFilter) && (!q || normTxt(i.name).includes(q) || normTxt((COLORS[i.color] || [""])[0]).includes(q)))
+  const list = all.filter((i) => inFilter(i, catFilter) && (!q || normTxt(i.name).includes(q) || normTxt((COLORS[i.color] || [""])[0]).includes(q) || normTxt(i.brand).includes(q)))
     .sort((a, b) => CATS.findIndex((c) => c.id === a.cat) - CATS.findIndex((c) => c.id === b.cat) || a.name.localeCompare(b.name, "fr"));
   $("grid").innerHTML = list.length ? list.map((it) =>
     '<button type="button" class="card' + (it.dirty ? " is-dirty" : "") + '" data-id="' + esc(it.id) + '"' + (it.demo ? " disabled" : "") + ">" +
     thumb(it, it.demo ? "Exemple" : it.dirty ? "Au sale" : it.cat === "accessoire" ? catLabel(it) : "", isHome(it) ? "Maison" : "") +
-    '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">' + wornText(it) + (it.wornCount ? " · " + it.wornCount + " fois" : "") + "</span></button>"
+    '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">' + (it.brand ? esc(it.brand) + " · " : "") + wornText(it) + (it.wornCount ? " · " + it.wornCount + " fois" : "") + "</span></button>"
   ).join("") : '<p class="empty">' + (q ? "Aucune pièce ne correspond à « " + esc(search.trim()) + " »." : catFilter === "trier" && all.length ? "Rien à trier : tout a été porté ces 6 derniers mois." : all.length ? "Rien dans cette catégorie pour l'instant." : "Ton dressing est vide. Ajoute ton premier vêtement : une photo, un nom, et c'est parti.") + "</p>";
   hydratePhotos($("view-wardrobe"));
 }
@@ -759,6 +763,12 @@ function toggleCheck(itemId) {
 }
 
 
+// ---------------- MARQUES ----------------
+function brandsList() {
+  const m = new Map();
+  for (const i of liveItems()) if (i.brand) { const k = i.brand.trim(); const key = normTxt(k); const e = m.get(key) || [k, 0]; e[1]++; m.set(key, e); }
+  return [...m.values()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr"));
+}
 // ---------------- PROGRESSION ET PIÈCES QUI MANQUENT ----------------
 function renderProgress(all) {
   const pr = $("progress"), gp = $("gaps");
@@ -1116,13 +1126,16 @@ function openItem(it) {
   draft.newBlob = null; draft.previewUrl = null; draft.cutBlob = null; draft.cutUrl = null; draft.cutBusy = false;
   draft.useCut = it && it.cut ? true : undefined;
   // en création, tout ce qui n'a pas été touché à la main est deviné ; en modification, rien ne bouge tout seul
-  draft.touched = new Set(it ? ["cat", "acc", "warmth", "material", "pattern", "rain", "styles", "occ", "seasons"] : []);
+  draft.touched = new Set(it ? ["cat", "acc", "warmth", "material", "pattern", "rain", "styles", "occ", "seasons", "color"] : []);
   // catégorie de départ : celle du filtre ; le nom peut la changer (« Jean… » → Bas)
   if (!it) draft.defaultCat = catFilter !== "tous" && catFilter !== "maison" && catFilter !== "trier" ? catFilter : "haut";
   if (!it) autoFill();
   $("f-more").open = false;
   $("item-title").textContent = it ? "Modifier" : "Nouveau vêtement";
   $("f-name").value = draft.name;
+  $("f-brand").value = draft.brand || ""; $("f-size").value = draft.size || "";
+  $("f-comp").value = draft.composition || ""; $("f-care").value = draft.care || "";
+  $("brand-list").innerHTML = brandsList().map(([b]) => '<option value="' + esc(b) + '">').join("");
   $("btn-del").hidden = !it; $("btn-del").dataset.confirm = ""; $("btn-del").textContent = "Supprimer";
   $("f-err").hidden = true;
   $("photo-status").textContent = cameraSupported() ? "Photo prise ici : rien n'est gardé dans ton album." : "Choisis une photo, ou ajoute le vêtement sans photo.";
@@ -1183,6 +1196,10 @@ function renderItemSheet() {
   }).join("");
   $("f-cat").innerHTML = chips(CATS, "cat", false, "c");
   $("f-acc-group").hidden = draft.cat !== "accessoire";
+  const hasKey = !!aiKey(), hasPhoto = !!(draft.newBlob || draft.photo || draft.cut);
+  $("btn-recognize").hidden = !(hasKey && hasPhoto) || draft.cutBusy;
+  $("btn-label").hidden = !hasKey;
+  $("ai-hint").hidden = hasKey;
   $("f-acc").innerHTML = chips(ACC_TYPES, "acc", false, "acc");
   $("f-summary").textContent = detailSummary();
   $("f-color").innerHTML = Object.entries(COLORS).map(([k, v]) => '<button type="button" class="sw" data-k="' + k + '" style="background:' + v[1] + '" aria-pressed="' + (draft.color === k) + '" title="' + v[0] + '" aria-label="' + v[0] + '"></button>').join("");
@@ -1222,7 +1239,87 @@ async function runCutout(blob) {
     d.useCut = false;
     $("photo-status").textContent = "Fond trop chargé ou trop proche du vêtement : photo gardée entière. Astuce : pose le vêtement à plat sur un drap ou un sol uni, de couleur différente, sans qu'il touche les bords.";
   }
+  // couleur et motif, calculés sur le téléphone
+  try {
+    const col = r.ok ? await detectColor(r.blob, { cut: true }) : await detectColor(blob, { cut: false });
+    if (draft === d && col) {
+      if (!d.touched.has("color")) d.color = col.color;
+      if (!d.touched.has("pattern") && col.pattern === "motif") d.pattern = "motif";
+    }
+  } catch (e) {}
+  if (draft !== d) return;
   renderItemSheet();
+  // reconnaissance complète si la styliste est configurée et que la fiche est encore vide
+  if (aiKey() && !editing && !$("f-name").value.trim()) runRecognize();
+}
+
+function photoForAi() {
+  if (draft.cutBlob && draft.useCut !== false) return Promise.resolve(draft.cutBlob);
+  if (draft.newBlob) return Promise.resolve(draft.newBlob);
+  if (draft.photo || draft.cut) return sync.photoUrl(draft.cut || draft.photo).then((u) => fetch(u)).then((r) => r.blob());
+  return Promise.resolve(null);
+}
+const aiErrText = (e) => ({
+  auth: "Anthropic refuse la clé API. Vérifie-la dans Réglages.",
+  credit: "Le compte Anthropic n'a plus de crédit.",
+  rate: "Trop de demandes d'un coup. Réessaie dans une minute.",
+  busy: "La styliste est surchargée. Réessaie dans quelques minutes.",
+  network: "Pas de connexion.",
+  notcloth: "La styliste ne voit pas de vêtement sur cette photo.",
+  unreadable: "Étiquette illisible : rapproche-toi, avec plus de lumière, bien à plat.",
+  format: "Réponse inexploitable. Réessaie."
+}[e && e.kind] || "La demande n'a pas abouti" + (e && e.message ? " (" + e.message + ")" : "") + ".");
+
+async function runRecognize() {
+  const d = draft; if (!d) return;
+  const btn = $("btn-recognize");
+  btn.disabled = true; btn.textContent = "La styliste regarde…";
+  $("photo-status").textContent = "Reconnaissance du vêtement…";
+  try {
+    const blob = await photoForAi();
+    if (!blob) throw new AiError("other", "pas de photo");
+    const r = await recognizeItem(aiKey(), blob);
+    if (draft !== d) return;
+    let applied = 0;
+    const set = (k, v) => { if (v !== null && v !== undefined && !(Array.isArray(v) && !v.length)) { d[k] = v; d.touched.add(k); applied++; } };
+    if (r.name && !$("f-name").value.trim()) { d.name = r.name; $("f-name").value = r.name; }
+    set("cat", r.cat); if (r.cat === "accessoire") set("acc", r.acc || "sac");
+    set("color", r.color); set("pattern", r.pattern); set("material", r.material); set("warmth", r.warmth);
+    set("seasons", r.seasons); set("occ", r.occ); set("styles", r.styles); set("rain", r.rain);
+    if (r.brand && !$("f-brand").value.trim()) $("f-brand").value = r.brand;
+    $("photo-status").textContent = applied ? "✨ Reconnu par la styliste. Vérifie et corrige si besoin, puis enregistre." : "La styliste n'a rien pu reconnaître sur cette photo.";
+  } catch (e) {
+    if (draft === d) $("photo-status").textContent = aiErrText(e);
+  }
+  btn.disabled = false; btn.textContent = "✨ Reconnaître le vêtement";
+  if (draft === d) renderItemSheet();
+}
+
+async function runLabel(blob) {
+  const d = draft; if (!d || !blob) return;
+  const btn = $("btn-label");
+  btn.disabled = true; btn.textContent = "Lecture de l'étiquette…";
+  try {
+    const r = await readLabel(aiKey(), blob);
+    if (draft !== d) return;
+    const got = [];
+    if (r.brand) { $("f-brand").value = r.brand; got.push("marque"); }
+    if (r.size) { $("f-size").value = r.size; got.push("taille"); }
+    if (r.composition.length) {
+      $("f-comp").value = r.composition.map((c) => (c.p ? c.p + " % " : "") + c.m).join(", ");
+      got.push("composition");
+      const m = materialFromComposition(r.composition);
+      if (m.material && !d.touched.has("material")) { d.material = m.material; d.touched.add("material"); }
+      if (m.warmth && !d.touched.has("warmth")) { d.warmth = m.warmth; d.touched.add("warmth"); if (!d.touched.has("seasons")) autoFill(); }
+    }
+    if (r.care.length) { $("f-care").value = r.care.join(" · "); got.push("entretien"); }
+    $("photo-status").textContent = got.length ? "Étiquette lue : " + got.join(", ") + ". Détails dans « Plus de détails »." : "Rien de lisible sur cette étiquette.";
+    if (got.length > 1) $("f-more").open = true;
+  } catch (e) {
+    if (draft === d) $("photo-status").textContent = aiErrText(e);
+  }
+  btn.disabled = false; btn.textContent = "Photographier l'étiquette";
+  if (draft === d) renderItemSheet();
 }
 
 async function saveItemForm(e) {
@@ -1249,6 +1346,8 @@ async function saveItemForm(e) {
     const item = {
       id, name: draft.name, cat: draft.cat, color: draft.color, pattern: draft.pattern, warmth: draft.warmth,
       cut, seasons: draft.seasons, rain: draft.rain, occ: draft.occ, dirty: !!draft.dirty, dirtyAt: draft.dirty ? (editing && editing.dirty && editing.dirtyAt) || Date.now() : null, photo,
+      brand: $("f-brand").value.trim() || null, size: $("f-size").value.trim() || null,
+      composition: $("f-comp").value.trim() || null, care: $("f-care").value.trim() || null,
       styles: draft.styles, material: draft.material || null, acc: draft.cat === "accessoire" ? draft.acc || "sac" : null,
       createdAt: editing ? editing.createdAt || Date.now() : Date.now(), updatedAt: Date.now()
     };
@@ -1338,6 +1437,7 @@ function bind() {
 
   delegate("cat-filter", "f", (f) => { catFilter = f; renderWardrobe(); });
   on("search", "input", (e) => { search = e.target.value; renderWardrobe(); });
+  delegate("brand-chips", "brand", (b) => { const same = normTxt(search) === normTxt(b); search = same ? "" : b; $("search").value = search; renderWardrobe(); });
   delegate("grid", "id", (id) => { const it = liveItems().find((i) => i.id === id); if (it) openItem(it); });
   delegate("laundry-row", "clean", (id) => { setDirty(id, false); toast("Remis dans le dressing."); });
   on("btn-all-clean", "click", () => {
@@ -1356,7 +1456,18 @@ function bind() {
   const refill = () => { if (!editing) autoFill(); renderItemSheet(); };
   delegate("f-cat", "c", (v) => { draft.cat = v; touch("cat"); refill(); });
   delegate("f-acc", "acc", (v) => { draft.acc = v; touch("acc"); refill(); });
-  delegate("f-color", "k", (v) => { draft.color = v; renderItemSheet(); });
+  delegate("f-color", "k", (v) => { draft.color = v; touch("color"); renderItemSheet(); });
+  on("btn-recognize", "click", runRecognize);
+  on("btn-label", "click", async () => {
+    if (!cameraSupported()) { $("f-label-file").click(); return; }
+    try { const b = await takePhoto(); if (b) runLabel(b); }
+    catch (e) { $("f-label-file").click(); }
+  });
+  on("f-label-file", "change", async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try { runLabel(await resizeFile(f, 1400)); } catch (ex) { $("photo-status").textContent = "Cette image n'a pas pu être lue."; }
+    e.target.value = "";
+  });
   delegate("f-pattern", "p", (v) => { draft.pattern = v; touch("pattern"); renderItemSheet(); });
   delegate("f-warm", "w", (v) => { draft.warmth = +v; touch("warmth"); refill(); });
   delegate("f-season", "s", (v) => { draft.seasons = draft.seasons.includes(v) ? draft.seasons.filter((x) => x !== v) : draft.seasons.concat(v); touch("seasons"); renderItemSheet(); });
