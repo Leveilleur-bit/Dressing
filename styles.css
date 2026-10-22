@@ -333,3 +333,13 @@ input[type="date"], input[type="number"] { width: 100%; font: inherit; padding: 
 .why-box .label { margin: 0; }
 .why-box .chip { cursor: pointer; }
 .why-box .chip.skip { color: var(--muted); }
+
+/* looks d'inspiration */
+.looks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+.look { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); display: flex; flex-direction: column; }
+.look .look-img { aspect-ratio: 4 / 5; background: var(--paper, var(--surface)); display: grid; place-items: center; overflow: hidden; }
+.look .look-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.look .look-body { padding: 8px; display: grid; gap: 6px; font-size: .85rem; }
+.look .look-desc { color: var(--muted); line-height: 1.35; }
+.look input { font-size: .85rem; padding: 6px 8px; }
+.look .link { justify-self: start; font-size: .82rem; }

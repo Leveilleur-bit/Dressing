@@ -9,7 +9,7 @@ const LS = {
 };
 export { LS };
 
-export const emptyDoc = () => ({ app: "dressing-du-matin", version: 1, items: [], history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {}, outfits: {} });
+export const emptyDoc = () => ({ app: "dressing-du-matin", version: 1, items: [], history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {}, outfits: {}, looks: {} });
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -48,6 +48,7 @@ export function merge(local, remote) {
     trips: mergeMap(remote.trips, local.trips),
     picks: mergeMap(remote.picks, local.picks),
     outfits: mergeMap(remote.outfits, local.outfits),
+    looks: mergeMap(remote.looks, local.looks),
     week: ((local.week && local.week.t) || 0) > ((remote.week && remote.week.t) || 0) ? local.week : remote.week || null,
     prefs: ((local.prefs && local.prefs.t) || 0) > ((remote.prefs && remote.prefs.t) || 0) ? local.prefs : remote.prefs || emptyDoc().prefs
   };
@@ -138,9 +139,9 @@ export class Sync {
   // ---------- photos ----------
   cacheKey(path) { return "https://dressing.photos/" + this.profile.id + "/" + path; }
 
-  async uploadPhoto(blob, itemId, suffix = "") {
+  async uploadPhoto(blob, itemId, suffix = "", dir = "photos/") {
     const ext = blob.type === "image/png" ? ".png" : ".jpg";
-    const path = "photos/" + itemId + "-" + Date.now().toString(36) + suffix + ext;
+    const path = dir + itemId + "-" + Date.now().toString(36) + suffix + ext;
     await this.repo.putBlob(path, blob, "Photo : " + itemId);
     await this.cachePut(path, blob);
     this.photoUrls.set(path, URL.createObjectURL(blob));

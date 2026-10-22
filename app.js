@@ -7,18 +7,18 @@ import { Repo, parseRepo } from "./js/github.js";
 import { fetchTwoDays, fetchRange, searchCity, locate } from "./js/weather.js";
 import { initCamera, takePhoto, takePhotos, cameraSupported, resizeFile } from "./js/camera.js";
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
-import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromComposition, detectMany } from "./js/ai.js";
+import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromComposition, detectMany, describeLook } from "./js/ai.js";
 import { detectColor } from "./js/colorid.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.9.0";
+const VERSION = "1.10.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // ---------------- état ----------------
 let sync = null;               // synchronisation du profil actif (null = exemple)
 let doc = null;                // données du dressing affiché
-let demoDoc = { items: demoItems(), history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {}, week: null, outfits: {} };
+let demoDoc = { items: demoItems(), history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {}, week: null, outfits: {}, looks: {} };
 let tripDraft = null, openTripId = null;
 let aiBusy = false;
 let dayOffset = new Date().getHours() >= 19 ? 1 : 0;
@@ -443,7 +443,7 @@ async function askAi() {
       if (!path || !sync) return Promise.resolve(null);
       return sync.photoUrl(path).then((u) => fetch(u)).then((r) => r.blob());
     };
-    const r = await askStylist(key, { items, ctx: c, weather: weather[dayOffset], prefs: prefs(), liked, disliked, lessons, noPieces, worn, composed, current: current.pieces.map((p) => p.name).join(" + "), loadImage });
+    const r = await askStylist(key, { items, ctx: c, weather: weather[dayOffset], prefs: prefs(), looks: liveLooks(), loadLook: (l) => sync ? sync.photoUrl(l.photo).then((u) => fetch(u)).then((r) => r.blob()) : Promise.resolve(null), liked, disliked, lessons, noPieces, worn, composed, current: current.pieces.map((p) => p.name).join(" + "), loadImage });
     const pieces = r.ids.map((id) => byId.get(id));
     current = { key: comboKey(pieces), pieces, reasons: r.why, tip: r.tip, title: r.title, ai: true };
     seen.push(current.key);
@@ -820,6 +820,36 @@ function renderProgress(all) {
       '<p class="note small">D\'après ce que tu as déjà : couleurs, saisons et occasions qui vont ensemble. Utile avant les soldes.</p>'
       : '<p class="note">Ton dressing est bien équilibré : aucune pièce de base n\'ajouterait beaucoup de tenues.</p>');
   gp.hidden = false;
+}
+
+// ---------------- LOOKS QUE J'AIME ----------------
+const liveLooks = () => Object.entries(data().looks || {}).filter(([, l]) => l && !l.deleted && l.photo).map(([id, l]) => ({ id, ...l })).sort((a, b) => (b.t || 0) - (a.t || 0));
+function renderLooks() {
+  const list = liveLooks();
+  $("looks-count").textContent = list.length ? String(list.length) : "";
+  $("looks").innerHTML = list.map((l) =>
+    '<div class="look"><div class="look-img" data-photo="' + esc(l.photo) + '"></div><div class="look-body">' +
+    (l.desc ? '<span class="look-desc">' + esc(l.desc) + "</span>" : aiKey() ? '<span class="look-desc">Description en attente…</span>' : "") +
+    '<input type="text" maxlength="120" placeholder="Ce qui te plaît" data-look-note="' + esc(l.id) + '" value="' + esc(l.note || "") + '">' +
+    '<button type="button" class="link" data-look-del="' + esc(l.id) + '">Retirer</button></div></div>').join("");
+  hydratePhotos($("looks"));
+}
+async function addLooks(files) {
+  if (isDemo()) { toast("Ajoute d'abord ton profil : les looks sont rangés dans ton dépôt privé."); return; }
+  const st = $("look-status"); const key = aiKey();
+  let n = 0;
+  for (const f of files) {
+    n++; st.hidden = false; st.textContent = "Ajout du look " + n + " sur " + files.length + "…";
+    try {
+      const blob = await resizeFile(f, 1100);
+      const id = uid();
+      const photo = await sync.uploadPhoto(blob, id, "", "photos/looks/");
+      sync.change((d) => { d.looks = d.looks || {}; d.looks[id] = { photo, desc: "", note: "", t: Date.now() }; });
+      if (key) describeLook(key, blob).then((desc) => { if (desc) sync.change((d) => { if (d.looks && d.looks[id]) { d.looks[id].desc = desc; d.looks[id].t = Date.now(); } }); }).catch(() => {});
+    } catch (e) { toast("Un look n'a pas pu être ajouté. Vérifie la connexion."); }
+  }
+  st.textContent = files.length > 1 ? files.length + " looks ajoutés." : "Look ajouté.";
+  setTimeout(() => (st.hidden = true), 2500);
 }
 
 // ---------------- POURQUOI CE REFUS ----------------
@@ -1199,6 +1229,7 @@ function renderSettings() {
   $("style-count").textContent = chosen.length + " / 3";
   $("style-desc").innerHTML = STYLES.filter((x) => chosen.includes(x.id)).map((x) => "<li><strong>" + esc(x.name) + "</strong> : " + esc(x.desc) + "</li>").join("");
   if (document.activeElement !== $("style-note")) $("style-note").value = prefs().note || "";
+  if (!($("looks").contains(document.activeElement) && document.activeElement.tagName === "INPUT")) renderLooks();
   const k = aiKey();
   if (document.activeElement !== $("ai-key")) $("ai-key").value = k ? "••••••••" + k.slice(-4) : "";
   $("btn-ai-del").hidden = !k;
@@ -1864,6 +1895,19 @@ function bind() {
   delegate("style-chips", "style", toggleStyle);
   delegate("designer-chips", "style", toggleStyle);
   on("style-note", "change", (e) => setPrefs({ note: e.target.value.trim() }));
+  on("btn-look-add", "click", () => $("look-file").click());
+  on("look-file", "change", (e) => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) addLooks(fs); });
+  on("looks", "click", (e) => {
+    const b = e.target.closest("[data-look-del]"); if (!b) return;
+    const id = b.dataset.lookDel; const l = (data().looks || {})[id];
+    mutate((d) => { if (d.looks && d.looks[id]) { d.looks[id].deleted = true; d.looks[id].t = Date.now(); } });
+    if (l && l.photo && sync) sync.deletePhoto(l.photo);
+    toast("Look retiré.");
+  });
+  on("looks", "change", (e) => {
+    const id = e.target.dataset.lookNote; if (!id) return; const v = e.target.value.trim();
+    mutate((d) => { if (d.looks && d.looks[id]) { d.looks[id].note = v; d.looks[id].t = Date.now(); } });
+  });
   on("ai-key", "focus", (e) => { if (e.target.value.startsWith("••")) e.target.value = ""; });
   on("ai-key", "blur", () => setTimeout(renderSettings, 200));
   on("btn-ai-save", "click", async () => {

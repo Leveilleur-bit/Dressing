@@ -14,6 +14,7 @@ Elle tient compte de :
 - **ton envie du jour** : confort, classe ou de la couleur.
 - **les accessoires** : écharpe, bonnet et gants quand il fait froid, lunettes et chapeau au soleil, sac, ceinture ou bijou assortis ;
 - **tes styles et créatrices** préférés (jusqu'à 3 par personne), et en option une **styliste IA**.
+- **tes looks favoris** (Réglages → Looks que j'aime) : des captures Instagram, Pinterest ou des photos de magazine, rangées dans le dépôt privé ; la styliste les regarde et en reprend l'esprit avec tes propres vêtements.
 
 Et aussi :
 

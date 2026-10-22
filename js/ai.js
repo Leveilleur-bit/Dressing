@@ -111,7 +111,7 @@ function describeItem(it, day, num) {
 /**
  * Demande une tenue. Renvoie {ids, title, why:[], tip}.
  */
-export async function askStylist(key, { items, ctx, weather, prefs, liked = [], disliked = [], lessons = [], noPieces = [], worn = [], composed = [], current, loadImage }) {
+export async function askStylist(key, { items, ctx, weather, prefs, looks = [], loadLook, liked = [], disliked = [], lessons = [], noPieces = [], worn = [], composed = [], current, loadImage }) {
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
   let clean = items.filter((i) => !i.dirty && (ctx.occ === "maison" || !homeOnly(i)));
   // au-delà de 48 pièces, on garde celles de la saison et de l'occasion pour que la planche reste lisible
@@ -164,10 +164,19 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked = [], 
     clean.map((it, i) => describeItem(it, ctx.day, i + 1)).join("\n")
   ].filter(Boolean).join("\n\n");
 
-  const content = sheet
-    ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: sheet } },
-       { type: "text", text: "Voici la planche photo de toutes les pièces disponibles : chaque photo porte le numéro de la pièce. Fie-toi aux photos pour les vraies couleurs, matières et formes ; la description écrite peut être imprécise.\n\n" + user }]
-    : user;
+  // looks d'inspiration : les 4 plus récents en image, les autres en description
+  const lookImgs = [];
+  if (loadLook) for (const l of looks.slice(0, 4)) { try { const b = await loadLook(l); if (b) lookImgs.push(await toJpegB64(b, 640)); } catch (e) {} }
+  const lookText = looks.length ? "Looks d'inspiration que la personne aime" + (lookImgs.length ? " (les " + lookImgs.length + " premiers sont en photo ci-dessus, après la planche)" : "") + " : reprends leur esprit (couleurs, proportions, niveau d'habillé) avec ses propres pièces.\n" +
+    looks.slice(0, 12).map((l, i) => "- Look " + (i + 1) + (l.desc ? " : " + l.desc : "") + (l.note ? " — ce qui lui plaît : « " + l.note + " »" : "")).join("\n") : "";
+  const intro = (sheet ? "La première image est la planche photo de toutes les pièces disponibles : chaque photo porte le numéro de la pièce. Fie-toi aux photos pour les vraies couleurs, matières et formes ; la description écrite peut être imprécise.\n" : "") +
+    (lookImgs.length ? "Les images suivantes sont des looks d'inspiration (pas ses vêtements).\n" : "");
+  const userAll = [lookText, user].filter(Boolean).join("\n\n");
+  const content = sheet || lookImgs.length
+    ? [...(sheet ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: sheet } }] : []),
+       ...lookImgs.map((d) => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: d } })),
+       { type: "text", text: intro + "\n" + userAll }]
+    : userAll;
   const out = await structured(key, {
     system, content, name: "proposer_tenue", description: "Propose une tenue composée de pièces du dressing.",
     schema: { type: "object", required: ["pieces", "titre", "pourquoi"], properties: {
@@ -371,4 +380,15 @@ async function contactSheet(items, loadImage) {
   }
   const out = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.8));
   return toJpegB64(out, 1568);
+}
+
+/** Décrit un look d'inspiration en une phrase, pour que la styliste s'en souvienne sans renvoyer l'image. */
+export async function describeLook(key, blob) {
+  const out = await askVision(key, blob,
+    "Tu es une styliste. On te montre un look qui plaît à la personne (capture d'Instagram, photo de magazine…). Décris-le en français, de façon utile pour recomposer cet esprit avec d'autres vêtements.",
+    "Décris ce look avec l'outil decrire_look.",
+    { size: 768, maxTokens: 800, name: "decrire_look", description: "Décrit un look d'inspiration.",
+      schema: { type: "object", required: ["resume"], properties: {
+        resume: { type: "string", description: "une phrase de 25 mots maximum : les pièces, les couleurs, les proportions et l'esprit (ex. « Pull crème oversize, jean droit brut, mocassins marron : chic décontracté, palette neutre chaude »)" } } } });
+  return String(out.resume || "").trim();
 }
