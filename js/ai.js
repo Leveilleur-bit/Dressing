@@ -32,13 +32,57 @@ async function call(key, body) {
   return res.json();
 }
 
+/**
+ * Réponse structurée garantie : on oblige le modèle à « appeler un outil » dont le schéma décrit
+ * exactement la réponse attendue. Plus de JSON tronqué ou entouré de texte.
+ */
+async function structured(key, { system, content, name, description, schema, maxTokens = 1500 }) {
+  const j = await call(key, {
+    model: AI_MODEL, max_tokens: maxTokens, system,
+    tools: [{ name, description, input_schema: schema }],
+    tool_choice: { type: "tool", name },
+    messages: [{ role: "user", content }]
+  });
+  const use = (j.content || []).find((b) => b.type === "tool_use" && b.name === name);
+  if (use && use.input && typeof use.input === "object") return use.input;
+  // secours : un JSON dans le texte
+  const t = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+  const m = t.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch (e) {} }
+  if (j.stop_reason === "max_tokens") throw new AiError("format", "réponse trop longue");
+  throw new AiError("format", "réponse illisible");
+}
+
+// schémas volontairement simples : une valeur absente s'écrit "" (chaîne vide)
+const S = { str: { type: "string" }, strOrNull: { type: "string", description: "chaîne vide si inconnu" }, strList: { type: "array", items: { type: "string" } } };
+const enumOrNull = (vals) => ({ type: "string", enum: [...vals, ""], description: "chaîne vide si sans objet" });
+function itemSchema(withBox) {
+  const p = {
+    nom: { type: "string", description: "nom court et précis, 2 à 5 mots" },
+    categorie: { type: "string", enum: CATS.map((x) => x.id) },
+    accessoire: enumOrNull(ACC_TYPES.map((x) => x.id)),
+    couleur: { type: "string", enum: Object.keys(COLORS) },
+    motif: { type: "string", enum: ["uni", "motif"] },
+    matiere: enumOrNull(MATERIALS.map((x) => x.id)),
+    epaisseur: { type: "integer", enum: [1, 2, 3], description: "1 léger, 2 moyen, 3 chaud" },
+    saisons: { type: "array", items: { type: "string", enum: SEASONS.map((x) => x.id) } },
+    occasions: { type: "array", items: { type: "string", enum: OCCS.map((x) => x.id) } },
+    styles: { type: "array", items: { type: "string", enum: STYLE_TAGS.map((x) => x.id) }, maxItems: 2 },
+    pluie: { type: "string", enum: ["normal", "impermeable", "fragile"] },
+    marque: { ...S.strOrNull, description: "seulement si un logo ou une étiquette est lisible" }
+  };
+  const req = ["nom", "categorie", "couleur", "motif", "epaisseur", "saisons", "occasions", "pluie"];
+  if (withBox) { p.boite = { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4, description: "[gauche, haut, droite, bas] en millièmes de l'image (0 à 1000)" }; req.unshift("boite"); }
+  return { type: "object", properties: p, required: req };
+}
+
 export async function testKey(key) {
   await call(key, { model: AI_MODEL, max_tokens: 5, messages: [{ role: "user", content: "Réponds juste OK." }] });
 }
 
 const label = (list, id) => (list.find((x) => x.id === id) || {}).label || id;
 
-function describeItem(it, day) {
+function describeItem(it, day, num) {
   const d = daysBetween(it.lastWorn, day);
   const parts = [
     it.cat === "accessoire" ? "accessoire (" + label(ACC_TYPES, it.acc || "sac").toLowerCase() + ")" : label(CATS, it.cat).toLowerCase(),
@@ -53,7 +97,7 @@ function describeItem(it, day) {
     it.brand ? "marque " + it.brand : null,
         d === null ? "jamais porté" : d <= 0 ? "porté aujourd'hui" : "porté il y a " + d + " j"
   ].filter(Boolean);
-  return `- [${it.id}] ${it.name} : ${parts.join(", ")}`;
+  return `[${num}] ${it.name} : ${parts.join(", ")}`;
 }
 
 /**
@@ -70,14 +114,13 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked, disli
 
   const system = [
     "Tu es une styliste personnelle française, précise et bienveillante.",
-    "Tu composes UNE tenue complète uniquement avec les pièces listées (identifiants entre crochets), jamais avec des pièces inventées.",
+    "Tu composes UNE tenue complète uniquement avec les pièces listées (numéros entre crochets), jamais avec des pièces inventées.",
     "Une tenue = un haut et un bas, ou une robe ; des chaussures s'il y en a ; une veste ou un manteau si la météo le demande. Tu peux superposer deux hauts (ex. chemise sous un pull).",
     "Ajoute un à trois accessoires listés (sac, écharpe, bonnet, ceinture, bijou…) quand ils complètent bien la tenue ou que le froid les demande.",
     "Respecte la météo, l'occasion, la saison et évite les pièces portées ces derniers jours.",
     "L'occasion « maison / travaux » désigne une tenue pour rester chez soi ou bricoler : confort avant tout, pièces de maison (pilou, vieux jean, sweat) bienvenues, pas besoin de manteau ni de style.",
     "Inspire-toi fortement des styles et créatrices aimés : explique en quoi la tenue leur ressemble, concrètement.",
-    "Réponds en JSON strict, sans texte autour, au format :",
-    '{"pieces":["id1","id2"],"titre":"4 à 6 mots","pourquoi":["phrase courte","phrase courte","phrase courte"],"conseil":"une astuce de portage (rentrer la chemise, retrousser, accessoire déjà évoqué…) ou chaîne vide"}'
+    "Donne ta réponse avec l'outil proposer_tenue : les numéros des pièces choisies, un titre de 4 à 6 mots, 2 à 4 raisons courtes et une astuce de portage (ou chaîne vide)."
   ].join("\n");
 
   const user = [
@@ -91,18 +134,24 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked, disli
     disliked.length ? "Tenues refusées (à ne pas reproposer) :\n" + disliked.slice(0, 6).map((l) => "- " + l).join("\n") : "",
     current ? `L'appli proposait déjà : ${current}. Propose autre chose si tu peux faire mieux, sinon améliore-la.` : "",
     "Pièces disponibles (propres) :",
-    clean.map((it) => describeItem(it, ctx.day)).join("\n")
+    clean.map((it, i) => describeItem(it, ctx.day, i + 1)).join("\n")
   ].filter(Boolean).join("\n\n");
 
-  const j = await call(key, { model: AI_MODEL, max_tokens: 900, system, messages: [{ role: "user", content: user }] });
-  const text = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) throw new AiError("format", "Réponse illisible");
-  let out;
-  try { out = JSON.parse(m[0]); } catch (e) { throw new AiError("format", "Réponse illisible"); }
-  const valid = new Set(clean.map((i) => i.id));
-  const ids = [...new Set((out.pieces || []).map(String))].filter((id) => valid.has(id));
-  if (!ids.length) throw new AiError("format", "Aucune pièce reconnue");
+  const out = await structured(key, {
+    system, content: user, name: "proposer_tenue", description: "Propose une tenue composée de pièces du dressing.",
+    schema: { type: "object", required: ["pieces", "titre", "pourquoi"], properties: {
+      pieces: { type: "array", items: { type: "integer" }, description: "numéros des pièces choisies (entre crochets dans la liste)" },
+      titre: S.str, pourquoi: { ...S.strList, maxItems: 5 }, conseil: S.str } }
+  });
+  // les numéros renvoient aux pièces ; on accepte aussi un identifiant ou un nom par sécurité
+  const norm = (x) => String(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const ids = [...new Set((out.pieces || []).map((v) => {
+    const n = parseInt(v, 10);
+    if (String(n) === String(v).trim() && clean[n - 1]) return clean[n - 1].id;
+    const byId = clean.find((i) => i.id === v); if (byId) return byId.id;
+    const byName = clean.find((i) => norm(i.name) === norm(v)); return byName ? byName.id : null;
+  }).filter(Boolean))];
+  if (!ids.length) throw new AiError("format", "aucune pièce reconnue");
   return {
     ids,
     title: String(out.titre || "La proposition de la styliste"),
@@ -126,16 +175,12 @@ async function toJpegB64(blob, max = 900) {
   return btoa(s);
 }
 
-async function askVision(key, blob, system, text, { maxTokens = 700, size = 900 } = {}) {
+async function askVision(key, blob, system, text, { maxTokens = 1200, size = 900, name, schema, description = "" } = {}) {
   const data = await toJpegB64(blob, size);
-  const j = await call(key, {
-    model: AI_MODEL, max_tokens: maxTokens, system,
-    messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data } }, { type: "text", text }] }]
+  return structured(key, {
+    system, name, schema, description, maxTokens,
+    content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data } }, { type: "text", text }]
   });
-  const t = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
-  const m = t.match(/\{[\s\S]*\}/);
-  if (!m) throw new AiError("format", "Réponse illisible");
-  try { return JSON.parse(m[0]); } catch (e) { throw new AiError("format", "Réponse illisible"); }
 }
 
 const ids = (list) => list.map((x) => x.id).join(", ");
@@ -162,8 +207,11 @@ export async function recognizeItem(key, blob) {
     "}",
     "Si la photo ne montre pas un vêtement, réponds {\"erreur\": \"pas un vêtement\"}."
   ].join("\n");
-  const r = await askVision(key, blob, system, text);
-  if (r.erreur) throw new AiError("notcloth", r.erreur);
+  const sch = itemSchema(false);
+  sch.properties.erreur = { ...S.strOrNull, description: "« pas un vêtement » si la photo ne montre pas de vêtement, sinon null" };
+  sch.required = [];
+  const r = await askVision(key, blob, system, text + "\nRéponds avec l'outil decrire_vetement.", { name: "decrire_vetement", schema: sch, description: "Décrit le vêtement photographié." });
+  if (r.erreur && !r.nom) throw new AiError("notcloth", r.erreur);
   return normalizeItem(r);
 }
 
@@ -199,8 +247,13 @@ export async function readLabel(key, blob) {
     "}",
     "Si ce n'est pas une étiquette lisible, réponds {\"erreur\": \"étiquette illisible\"}."
   ].join("\n");
-  const r = await askVision(key, blob, system, text);
-  if (r.erreur) throw new AiError("unreadable", r.erreur);
+  const r = await askVision(key, blob, system, text + "\nRéponds avec l'outil lire_etiquette.", { name: "lire_etiquette", description: "Ce qui est lisible sur l'étiquette.", schema: {
+    type: "object", properties: {
+      marque: S.strOrNull, taille: S.strOrNull,
+      composition: { type: "array", items: { type: "object", properties: { matiere: S.str, pourcentage: { type: "number", description: "0 si non indiqué" } }, required: ["matiere"] } },
+      entretien: S.strList, erreur: { ...S.strOrNull, description: "« étiquette illisible » si rien n'est lisible" }
+    } } });
+  if (r.erreur && !r.marque && !(r.composition || []).length) throw new AiError("unreadable", r.erreur);
   const comp = Array.isArray(r.composition) ? r.composition.filter((c) => c && c.matiere).map((c) => ({ m: String(c.matiere).toLowerCase(), p: +c.pourcentage || null })) : [];
   return {
     brand: typeof r.marque === "string" && r.marque.trim() ? r.marque.trim().slice(0, 40) : null,
@@ -239,7 +292,8 @@ export async function detectMany(key, blob) {
     "}]}",
     "Si aucun vêtement n'est visible, réponds {\"pieces\": []}."
   ].join("\n");
-  const r = await askVision(key, blob, system, text, { maxTokens: 6000, size: 1400 });
+  const r = await askVision(key, blob, system, text + "\nRéponds avec l'outil lister_vetements.", { maxTokens: 8000, size: 1400, name: "lister_vetements", description: "Liste des vêtements visibles et leur position.",
+    schema: { type: "object", required: ["pieces"], properties: { pieces: { type: "array", maxItems: 30, items: itemSchema(true) } } } });
   const list = Array.isArray(r.pieces) ? r.pieces : [];
   return list.slice(0, 30).map((p) => {
     const b = Array.isArray(p.boite) && p.boite.length === 4 ? p.boite.map((v) => Math.max(0, Math.min(1000, +v || 0)) / 1000) : null;
