@@ -11,7 +11,7 @@ import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromCom
 import { detectColor } from "./js/colorid.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.8.0";
+const VERSION = "1.8.1";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -311,8 +311,9 @@ function newSuggestion(reset) {
     // à la première ouverture du jour sur cet appareil, on reprend aussi l'occasion et l'envie choisies
     const p = (data().picks || {})[c.day];
     const hk = (sync ? sync.profile.id : "demo") + "/" + c.day;
-    if (p && !p.deleted && !honored.has(hk)) {
-      honored.add(hk);
+    const first = !honored.has(hk);
+    honored.add(hk); // une seule fois par jour : ensuite, c'est ton choix d'occasion ou d'envie qui compte
+    if (p && !p.deleted && first) {
       if (p.occ && p.occ !== c.occ) occOverride[c.day] = p.occ;
       mood = p.mood || "";
       c = context(); lastCtxKey = ctxKey(c); renderControls();
@@ -1600,8 +1601,9 @@ function bind() {
     if (t === "pluie") settings.manual.rain = !settings.manual.rain; else settings.manual.temp = t;
     saveSettings(); renderControls(); newSuggestion(true);
   });
-  delegate("occ-chips", "o", (o) => { occOverride[dayStr(dayOffset)] = o; renderControls(); newSuggestion(true); });
-  delegate("mood-chips", "m", (m) => { mood = m; renderControls(); newSuggestion(true); });
+  const markHonored = () => honored.add((sync ? sync.profile.id : "demo") + "/" + dayStr(dayOffset));
+  delegate("occ-chips", "o", (o) => { markHonored(); occOverride[dayStr(dayOffset)] = o; renderControls(); newSuggestion(true); });
+  delegate("mood-chips", "m", (m) => { markHonored(); mood = m; renderControls(); newSuggestion(true); });
 
   on("btn-other", "click", () => newSuggestion(false));
   on("btn-wear", "click", wearCurrent);
