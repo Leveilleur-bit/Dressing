@@ -11,7 +11,7 @@ import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromCom
 import { detectColor } from "./js/colorid.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.10.0";
+const VERSION = "1.11.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -124,47 +124,144 @@ function hydratePhotos(root) {
 // ---------------- flat lay ----------------
 // Composition façon « flat lay » : le haut, la veste qui le chevauche, le bas dessous,
 // les chaussures en bas, le sac sur le côté, les accessoires autour. Positions en % du cadre.
-const FL = {
-  haut: { l: 8, t: 5, w: 46, h: 36, z: 3 },
-  haut2: { l: 26, t: 3, w: 40, h: 34, z: 2 },
-  robe: { l: 9, t: 4, w: 46, h: 68, z: 2 },
-  bas: { l: 13, t: 35, w: 40, h: 47, z: 1 },
-  veste: { l: 41, t: 9, w: 50, h: 40, z: 4 },
-  chaussures: { l: 15, t: 82, w: 36, h: 14, z: 5 },
-  chaussures2: { l: 52, t: 84, w: 30, h: 12, z: 5 },
-  sac: { l: 61, t: 51, w: 32, h: 30, z: 5 },
-  echarpe: { l: 50, t: 2, w: 24, h: 30, z: 6 },
-  bonnet: { l: 75, t: 1, w: 22, h: 15, z: 6 },
-  chapeau: { l: 73, t: 1, w: 25, h: 15, z: 6 },
-  gants: { l: 1, t: 47, w: 15, h: 16, z: 6 },
-  ceinture: { l: 12, t: 33, w: 44, h: 6, z: 4 },
-  lunettes: { l: 57, t: 85, w: 27, h: 9, z: 6 },
-  bijou: { l: 1, t: 82, w: 13, h: 12, z: 6 },
-  extra: [{ l: 75, t: 18, w: 22, h: 18, z: 6 }, { l: 1, t: 64, w: 15, h: 16, z: 6 }, { l: 84, t: 84, w: 15, h: 12, z: 6 }, { l: 1, t: 1, w: 16, h: 14, z: 6 }]
-};
-function flatlay(pieces, small = false) {
-  const used = new Set();
-  let extra = 0;
-  const slotFor = (p) => {
-    let k = p.cat === "accessoire" ? p.acc || "sac" : p.cat;
-    if (k === "haut" && used.has("haut")) k = "haut2";
-    if (k === "chaussures" && used.has("chaussures")) k = "chaussures2";
-    let s = !used.has(k) && FL[k];
-    if (s) used.add(k);
-    else s = FL.extra[extra++ % FL.extra.length];
-    // sans veste ni bas (robe seule) : on resserre un peu la composition
-    if (k === "sac" && !pieces.some((x) => x.cat === "veste")) s = { ...s, t: 34 };
-    if (k === "chaussures" && pieces.some((x) => x.cat === "robe") && !pieces.some((x) => x.cat === "bas")) s = { ...s, t: 78 };
-    return s;
+/**
+ * Flat lay sans chevauchement : colonne de gauche (haut puis bas, ou la robe), colonne de droite
+ * (veste, deuxième haut, chaussures), puis les accessoires dans les espaces libres ; s'il n'y en a pas,
+ * une rangée est ajoutée en bas. Unités : largeur 100, hauteur H (110 de base).
+ */
+function layoutFlat(pieces) {
+  const W = 100; let H = 110;
+  const by = (c) => pieces.filter((p) => p.cat === c);
+  const tops = by("haut"), dress = by("robe")[0], bottom = by("bas")[0], jackets = by("veste"), shoes = by("chaussures").slice(0, 2);
+  const accs = pieces.filter((p) => p.cat === "accessoire");
+  const placed = new Map(); // id -> rect {x, y, w, h}
+  const L = { x: 3, w: 46 }, R = { x: 51, w: 46 };
+  // gauche
+  const left = [];
+  if (dress) left.push([dress, 72]);
+  else {
+    if (tops[0]) left.push([tops[0], bottom ? 44 : 60]);
+    if (bottom) left.push([bottom, tops[0] ? 58 : 62]);
+  }
+  let y = 3;
+  for (const [p, h] of left) { placed.set(p.id, { x: L.x, y, w: L.w, h }); y += h + 3; }
+  const leftBottom = y;
+  // chaussures : sous la robe s'il reste de la place à gauche, sinon en bas à droite
+  let rightLimit = H - 3;
+  if (shoes.length) {
+    const roomLeft = H - 3 - leftBottom;
+    if (roomLeft >= 22) {
+      const h = Math.min(26, roomLeft);
+      shoes.forEach((p, i) => placed.set(p.id, shoes.length === 1 ? { x: L.x + 4, y: leftBottom, w: L.w - 8, h } : { x: L.x + i * (L.w / 2), y: leftBottom, w: L.w / 2 - 1, h }));
+    } else {
+      const h = 20; rightLimit = H - 3 - h - 2;
+      shoes.forEach((p, i) => placed.set(p.id, shoes.length === 1 ? { x: R.x + 4, y: H - 3 - h, w: R.w - 8, h } : { x: R.x + i * (R.w / 2), y: H - 3 - h, w: R.w / 2 - 1, h }));
+    }
+  }
+  // droite : vestes puis hauts en plus (superposés)
+  const right = [...jackets, ...(dress ? tops : tops.slice(1))];
+  if (right.length) {
+    const avail = rightLimit - 3;
+    const h = Math.min(48, (avail - 3 * (right.length - 1)) / right.length);
+    right.forEach((p, i) => placed.set(p.id, { x: R.x, y: 3 + i * (h + 3), w: R.w, h }));
+  }
+  // le reste (pièces sans place prévue) et les accessoires : premier espace libre
+  const rest = pieces.filter((p) => !placed.has(p.id));
+  const free = (r) => r.x >= 1 && r.y >= 1 && r.x + r.w <= W - 1 && r.y + r.h <= H - 1 &&
+    [...placed.values()].every((q) => r.x + r.w <= q.x - 1 || q.x + q.w <= r.x - 1 || r.y + r.h <= q.y - 1 || q.y + q.h <= r.y - 1);
+  const findSpot = (sizes) => {
+    for (const [w, h] of sizes) for (let yy = 2; yy + h <= H - 1; yy += 2) for (let xx = 2; xx + w <= W - 1; xx += 2) { const r = { x: xx, y: yy, w, h }; if (free(r)) return r; }
+    return null;
   };
+  const overflow = [];
+  for (const p of rest) {
+    const big = p.cat !== "accessoire";
+    const r = findSpot(big ? [[40, 36], [30, 28], [24, 22]] : [[22, 20], [18, 16], [14, 13]]);
+    if (r) placed.set(p.id, r); else overflow.push(p);
+  }
+  if (overflow.length) {
+    const perRow = 4, cw = (W - 4) / perRow, rows = Math.ceil(overflow.length / perRow);
+    const y0 = H; H += rows * 22 + 2;
+    overflow.forEach((p, i) => placed.set(p.id, { x: 2 + (i % perRow) * cw + 1, y: y0 + Math.floor(i / perRow) * 22, w: cw - 2, h: 20 }));
+  }
+  return { H, placed };
+}
+function flatlay(pieces, small = false, interactive = false) {
+  const { H, placed } = layoutFlat(pieces);
+  const z = { bas: 1, robe: 1, haut: 2, veste: 3, chaussures: 4, accessoire: 5 };
   const html = pieces.map((p, i) => {
-    const s = slotFor(p);
+    const r = placed.get(p.id); if (!r) return "";
     const path = p.cut || p.photo;
     const kind = p.cut ? "fl-cut" : p.photo ? "fl-photo" : "fl-glyph";
     const data = path && sync ? ' data-photo="' + esc(path) + '" data-alt="' + esc(p.name) + '"' : "";
-    return '<div class="fl-item ' + kind + '" style="left:' + s.l + "%;top:" + s.t + "%;width:" + s.w + "%;height:" + s.h + "%;z-index:" + s.z + ";animation-delay:" + i * 0.05 + 's"' + data + ' title="' + esc(p.name) + '">' + glyph(p.cat, p.color, p.acc, p.name) + "</div>";
+    const tag = interactive ? "button" : "div";
+    return "<" + tag + (interactive ? ' type="button" data-pid="' + esc(p.id) + '" aria-label="' + esc(p.name) + '"' : "") + ' class="fl-item ' + kind + '" style="left:' + r.x + "%;top:" + (r.y / H * 100).toFixed(2) + "%;width:" + r.w + "%;height:" + (r.h / H * 100).toFixed(2) + "%;z-index:" + (z[p.cat] || 2) + ";animation-delay:" + i * 0.05 + 's"' + data + ' title="' + esc(p.name) + '">' + glyph(p.cat, p.color, p.acc, p.name) + "</" + tag + ">";
   }).join("");
-  return '<div class="flatlay' + (small ? " small" : "") + '">' + html + "</div>";
+  return '<div class="flatlay' + (small ? " small" : "") + '" style="aspect-ratio:100 / ' + Math.round(H) + '">' + html + "</div>";
+}
+
+// ---------------- CHANGER UNE PIÈCE ----------------
+let pieceFor = null; // {id, alts}
+function openPiece(id) {
+  if (!current) return;
+  const p = current.pieces.find((x) => x.id === id); if (!p) return;
+  const c = context();
+  const home = c.occ === "maison";
+  const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
+  const inOutfit = new Set(current.pieces.map((x) => x.id));
+  let cands = liveItems().filter((i) => !i.dirty && !inOutfit.has(i.id) && i.cat === p.cat && (home || !homeOnly(i)));
+  let alts = [];
+  if (p.cat === "accessoire") {
+    const same = cands.filter((i) => (i.acc || "sac") === (p.acc || "sac"));
+    cands = same.length ? same : cands;
+    const cols = new Set(current.pieces.filter((x) => x.cat !== "accessoire").map((x) => x.color));
+    const sc = (i) => (cols.has(i.color) ? 2 : 0) + (COLORS[i.color] && COLORS[i.color][2] ? 1 : 0) + Math.min(daysBetween(i.lastWorn, c.day) ?? 30, 30) / 30;
+    alts = cands.sort((a, b) => sc(b) - sc(a)).slice(0, 8).map((i) => ({ item: i, reasons: null }));
+  } else if (cands.length) {
+    const main = current.pieces.filter((x) => x.cat !== "accessoire");
+    const evaluate = cands.map((i) => main.map((x) => (x.id === p.id ? i : x)));
+    const ranked = suggest({ items: liveItems(), feedback: data().feedback }, c, [], { evaluate }) || [];
+    alts = ranked.slice(0, 8).map((r) => ({ item: r.pieces.find((x) => !inOutfit.has(x.id)), reasons: r.reasons })).filter((a) => a.item);
+  }
+  pieceFor = { id, alts };
+  const mainCount = current.pieces.filter((x) => x.cat === p.cat).length;
+  const removable = p.cat === "accessoire" || p.cat === "veste" || (p.cat === "haut" && mainCount > 1);
+  $("piece-sheet").innerHTML = '<div class="sheet-head"><div><span class="label">' + esc(catLabel(p)) + "</span><h2>" + esc(p.name) + '</h2></div><button class="x" type="button" data-pa="close" aria-label="Fermer">✕</button></div>' +
+    '<div class="actions"><button class="btn" type="button" data-pa="fiche">Voir la fiche</button>' + (removable ? '<button class="btn" type="button" data-pa="remove">Enlever de la tenue</button>' : "") + "</div>" +
+    '<span class="label">' + (alts.length ? "Changer pour… (les mieux assorties d'abord)" : "Rien d'autre de propre dans cette catégorie pour le moment.") + "</span>" +
+    (alts.length ? '<div class="alt-grid">' + alts.map((a, i) => {
+      const it = a.item; const path = it.cut || it.photo;
+      return '<button type="button" class="alt" data-alti="' + i + '"><span class="alt-img ' + (it.cut ? "fl-cut" : it.photo ? "fl-photo" : "fl-glyph") + '"' + (path && sync ? ' data-photo="' + esc(path) + '" data-alt="' + esc(it.name) + '"' : "") + ">" + glyph(it.cat, it.color, it.acc, it.name) + '</span><span class="alt-name">' + esc(it.name) + "</span></button>";
+    }).join("") + "</div>" : "");
+  hydratePhotos($("piece-sheet"));
+  $("piece-overlay").hidden = false; $("piece-sheet").scrollTop = 0;
+}
+function replacePieces(pieces, reasons) {
+  const c = context();
+  const worn = wornEntry(c);
+  current = { ...current, key: comboKey(pieces), pieces, reasons: reasons || current.reasons, ai: false, title: "" };
+  seen.push(current.key);
+  if (worn && sync) sync.change((d) => { const h = d.history.find((x) => x.id === worn.id); if (h) { h.items = pieces.map((x) => x.id); h.t = Date.now(); } });
+  savePick(c);
+  renderOutfit();
+}
+function pieceAction(act, b) {
+  if (act === "close") { $("piece-overlay").hidden = true; return; }
+  const p = current && current.pieces.find((x) => x.id === pieceFor.id); if (!p) return;
+  if (act === "fiche") { $("piece-overlay").hidden = true; openItem(p); return; }
+  if (act === "remove") {
+    $("piece-overlay").hidden = true;
+    replacePieces(current.pieces.filter((x) => x.id !== p.id), current.reasons.filter((r) => !r.includes(p.name)));
+    toast(p.name + " enlevée de la tenue.");
+  }
+}
+function pickAlt(i) {
+  const a = pieceFor && pieceFor.alts[+i]; if (!a || !current) return;
+  const old = current.pieces.find((x) => x.id === pieceFor.id);
+  const pieces = current.pieces.map((x) => (x.id === pieceFor.id ? a.item : x));
+  $("piece-overlay").hidden = true;
+  replacePieces(pieces, a.reasons || current.reasons.filter((r) => !old || !r.includes(old.name)));
+  toast((old ? old.name : "La pièce") + " → " + a.item.name);
 }
 
 // ---------------- toast ----------------
@@ -259,8 +356,9 @@ function renderOutfit() {
   ["btn-wear", "btn-other", "btn-like", "btn-dislike"].forEach((id) => ($(id).disabled = false));
   const order = { veste: 0, haut: 1, robe: 1, bas: 2, chaussures: 3, accessoire: 4 };
   const pieces = current.pieces.slice().sort((a, b) => (order[a.cat] ?? 5) - (order[b.cat] ?? 5));
-  lay.innerHTML = flatlay(pieces) +
-    '<ul class="fl-list">' + pieces.map((p) => '<li><span class="tag">' + esc(catLabel(p)) + '</span><span class="piece-name">' + esc(p.name) + '</span><span class="piece-meta">' + wornText(p) + "</span></li>").join("") + "</ul>";
+  lay.innerHTML = flatlay(pieces, false, true) +
+    '<ul class="fl-list">' + pieces.map((p) => '<li><button type="button" class="piece-row" data-pid="' + esc(p.id) + '"><span class="tag">' + esc(catLabel(p)) + '</span><span class="piece-name">' + esc(p.name) + '</span><span class="piece-meta">' + wornText(p) + '</span><span class="chev" aria-hidden="true">›</span></button></li>').join("") + "</ul>" +
+    '<p class="hint small tap-hint">Touche une pièce pour voir sa fiche ou la changer.</p>';
   hydratePhotos(lay);
   const worn = wornEntry(c);
   // une fois portée, les remarques « pas encore porté » n'ont plus de sens
@@ -1817,6 +1915,10 @@ function bind() {
   });
   delegate("with-sheet", "wa", (act, b) => withAction(act, b));
   on("with-overlay", "click", (e) => { if (e.target === $("with-overlay")) $("with-overlay").hidden = true; });
+  delegate("lay", "pid", (id) => openPiece(id));
+  delegate("piece-sheet", "pa", (act, b) => pieceAction(act, b));
+  delegate("piece-sheet", "alti", (i) => pickAlt(i));
+  on("piece-overlay", "click", (e) => { if (e.target === $("piece-overlay")) $("piece-overlay").hidden = true; });
 
   on("btn-batch", "click", openBatch);
   delegate("batch-sheet", "bt", (act) => batchAction(act));

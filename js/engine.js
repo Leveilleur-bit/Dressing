@@ -93,7 +93,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   tops.forEach((t) => bottoms.forEach((b) => bases.push([t, b])));
   dresses.forEach((d) => bases.push([d]));
   if (!bases.length) { tops.forEach((t) => bases.push([t])); bottoms.forEach((b) => bases.push([b])); }
-  if (!bases.length) return null;
+  if (!bases.length && !opts.evaluate) return null;
 
   const restDays = ctx.restDays ?? 3;
 
@@ -138,13 +138,20 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
 
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const combos = new Map();
-  const tries = Math.min(900, bases.length * Math.max(1, shoes.length) * (jackets.length + 1) * 3);
+  // opts.evaluate : on note des tenues données (changer une seule pièce) au lieu d'en tirer au hasard
+  const evals = opts.evaluate || null;
+  const tries = evals ? evals.length : Math.min(900, bases.length * Math.max(1, shoes.length) * (jackets.length + 1) * 3);
   for (let i = 0; i < tries; i++) {
-    const pieces = pick(bases).slice();
-    if (jackets.length && ((must && must.cat === "veste") || (allowJacket && (needJacket || Math.random() < 0.4)))) pieces.unshift(pick(jackets));
-    if (shoes.length) pieces.push(pick(shoes));
+    let pieces;
+    if (evals) pieces = evals[i].slice();
+    else {
+      pieces = pick(bases).slice();
+      if (jackets.length && ((must && must.cat === "veste") || (allowJacket && (needJacket || Math.random() < 0.4)))) pieces.unshift(pick(jackets));
+      if (shoes.length) pieces.push(pick(shoes));
+    }
     const key = comboKey(pieces);
-    if (combos.has(key) || disliked.has(key)) continue;
+    if (combos.has(key) || (!evals && disliked.has(key))) continue;
+    if (evals && disliked.has(key)) { combos.set(key, { key, pieces, score: -99, style: { score: 0, reasons: [] } }); continue; }
     let s = pieces.reduce((a, p) => a + itemScore(p), 0);
 
     // couleurs : une couleur vive au plus sur une base neutre
@@ -195,6 +202,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   }
 
   const ranked = [...combos.values()].sort((a, b) => b.score - a.score);
+  if (evals) return ranked.map((r) => ({ ...r, reasons: explain(r, ctx, { needJacket, layered, liked, pairScore }) }));
   if (!ranked.length) return null;
   const fresh = ranked.filter((c) => !avoidKeys.includes(c.key));
   const cands = fresh.length ? fresh : ranked;
