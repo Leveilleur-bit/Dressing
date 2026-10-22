@@ -5,13 +5,13 @@ import { suggestGaps, MILESTONES } from "./js/gaps.js";
 import { Sync, LS, uid, getProfiles, saveProfiles, getActiveId, setActiveId } from "./js/store.js";
 import { Repo, parseRepo } from "./js/github.js";
 import { fetchTwoDays, fetchRange, searchCity, locate } from "./js/weather.js";
-import { initCamera, takePhoto, cameraSupported, resizeFile } from "./js/camera.js";
+import { initCamera, takePhoto, takePhotos, cameraSupported, resizeFile } from "./js/camera.js";
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
-import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromComposition } from "./js/ai.js";
+import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromComposition, detectMany } from "./js/ai.js";
 import { detectColor } from "./js/colorid.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.6.0";
+const VERSION = "1.7.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -951,6 +951,191 @@ function withAction(act, b) {
   if (act === "keep") { keepOutfit(r.pieces, "avec"); b.textContent = "✓ Gardée"; b.disabled = true; }
 }
 
+
+// ---------------- AJOUT DE PLUSIEURS VÊTEMENTS ----------------
+let batch = null; // {mode, entries: [], busy, saving}
+const bEsc = esc;
+
+function openBatch() {
+  if (isDemo()) { openProfile(null); return; }
+  batch = { entries: [], status: "", saving: false, queue: [], running: 0 };
+  renderBatch();
+  $("batch-overlay").hidden = false; $("batch-sheet").scrollTop = 0;
+}
+function closeBatch() {
+  if (batch) for (const e of batch.entries) { if (e.url) URL.revokeObjectURL(e.url); }
+  batch = null; $("batch-overlay").hidden = true;
+  renderWardrobe();
+}
+
+function renderBatch() {
+  const el = $("batch-sheet"); if (!batch) return;
+  // on ne perd pas la saisie en cours quand la liste se met à jour
+  const ae = document.activeElement;
+  const focusIdx = ae && ae.classList && ae.classList.contains("batch-name") ? ae.dataset.bn : null;
+  const selStart = focusIdx !== null ? ae.selectionStart : 0;
+  const scroll = el.scrollTop;
+  renderBatchInner(el);
+  el.scrollTop = scroll;
+  if (focusIdx !== null) { const inp = el.querySelector('[data-bn="' + focusIdx + '"]'); if (inp) { inp.focus(); try { inp.setSelectionRange(selStart, selStart); } catch (e) {} } }
+}
+function renderBatchInner(el) {
+  const head = '<div class="sheet-head"><h2>Ajouter plusieurs vêtements</h2><button class="x" type="button" data-bt="close" aria-label="Fermer">✕</button></div>';
+  if (!aiKey()) {
+    el.innerHTML = head + '<p class="note">Cette fonction utilise la styliste pour reconnaître les vêtements. Ajoute ta clé API dans Réglages → Styliste IA, puis reviens ici.</p><button class="btn primary block" type="button" data-bt="settings">Aller aux réglages</button>';
+    return;
+  }
+  if (batch.chooser || (!batch.entries.length && !batch.status)) {
+    el.innerHTML = head +
+      '<section class="batch-mode"><h3>Une photo, plusieurs vêtements</h3><p class="note">Une penderie, une pile ou des vêtements étalés sur le lit : la styliste liste tout ce qu\'elle voit et découpe chaque pièce. Le plus rapide ; les photos sont moins belles qu\'une par une. Environ 2 centimes la photo.</p>' +
+      '<div class="actions"><button class="btn primary" type="button" data-bt="group-cam"' + (cameraSupported() ? "" : " hidden") + '>Prendre la photo</button><button class="btn" type="button" data-bt="group-file">Choisir dans l\'album</button></div></section>' +
+      '<section class="batch-mode"><h3>Une photo par vêtement, à la suite</h3><p class="note">Photographie les pièces l\'une après l\'autre sans rien remplir, ou choisis-en plusieurs dans l\'album : l\'appli détoure et reconnaît chaque pièce pendant ce temps. De belles photos ; environ 1 centime la pièce.</p>' +
+      '<div class="actions"><button class="btn primary" type="button" data-bt="burst"' + (cameraSupported() ? "" : " hidden") + '>Photographier en rafale</button><button class="btn" type="button" data-bt="many-file">Choisir plusieurs photos</button></div></section>' +
+      (batch.entries.length ? '<button class="btn block" type="button" data-bt="back">Revenir à la liste (' + batch.entries.length + ")</button>" : "");
+    return;
+  }
+  const ok = batch.entries.filter((e) => e.status === "ok");
+  const kept = ok.filter((e) => e.keep);
+  const pending = batch.entries.filter((e) => e.status === "wait" || e.status === "busy").length;
+  const lab = (list, id) => (list.find((x) => x.id === id) || {}).label || "";
+  el.innerHTML = head +
+    (batch.status ? '<p class="note batch-status">' + bEsc(batch.status) + "</p>" : "") +
+    (pending ? '<p class="note batch-status">Analyse en cours : ' + (batch.entries.length - pending) + " / " + batch.entries.length + "…</p>" : "") +
+    '<div class="batch-list">' + batch.entries.map((e, i) => {
+      const r = e.rec || {};
+      const meta = e.status === "ok" ? [e.cutBlob ? "détouré" : "", lab(CATS, r.cat), r.color ? (COLORS[r.color] || [""])[0].toLowerCase() : "", r.material ? lab(MATERIALS, r.material).toLowerCase() : "", r.brand || ""].filter(Boolean).join(" · ")
+        : e.status === "err" ? e.err : "en attente…";
+      return '<div class="batch-row' + (e.status === "ok" && !e.keep ? " off" : "") + '">' +
+        '<div class="thumb' + (e.cutBlob ? " is-cut" : "") + '">' + (e.url ? '<img src="' + e.url + '" alt="">' : "") + "</div>" +
+        '<div class="group" style="gap:4px;min-width:0">' +
+        (e.status === "ok" ? '<input type="text" class="batch-name" data-bn="' + i + '" value="' + bEsc(e.name || "") + '" maxlength="60" aria-label="Nom">' : '<span class="piece-name">' + (e.status === "busy" ? "Reconnaissance…" : e.status === "err" ? "Non reconnu" : "En attente") + "</span>") +
+        '<span class="piece-meta">' + bEsc(meta) + "</span></div>" +
+        (e.status === "ok" ? '<button type="button" class="check-btn" data-bk="' + i + '" aria-pressed="' + e.keep + '" aria-label="Garder">' + (e.keep ? "✓" : "") + "</button>" : "<span></span>") +
+        "</div>";
+    }).join("") + "</div>" +
+    (ok.length ? '<p class="note small">Décoche ce que tu ne veux pas, corrige les noms si besoin. Tout le reste se modifie ensuite dans la fiche de chaque pièce.</p>' : "") +
+    '<div class="actions"><button class="btn" type="button" data-bt="more">Ajouter d\'autres photos</button>' +
+    '<button class="btn primary" type="button" data-bt="save"' + (kept.length && !batch.saving ? "" : " disabled") + ">" + (batch.saving ? bEsc(batch.saving) : "Ajouter " + kept.length + " pièce" + (kept.length > 1 ? "s" : "")) + "</button></div>";
+}
+
+/** Découpe une zone (en fractions 0–1) d'une image. */
+async function cropBox(bmp, box) {
+  const W = bmp.width, H = bmp.height;
+  const pw = (box[2] - box[0]) * 0.04, ph = (box[3] - box[1]) * 0.04;
+  const x = Math.max(0, (box[0] - pw) * W), y = Math.max(0, (box[1] - ph) * H);
+  const w = Math.min(W, (box[2] + pw) * W) - x, h = Math.min(H, (box[3] + ph) * H) - y;
+  const r = Math.min(1, 800 / Math.max(w, h));
+  const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w * r)); c.height = Math.max(1, Math.round(h * r));
+  c.getContext("2d").drawImage(bmp, x, y, w, h, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, "image/jpeg", 0.86));
+}
+
+async function runGroup(blob) {
+  batch.chooser = false;
+  batch.status = "La styliste cherche les vêtements sur la photo…"; renderBatch();
+  try {
+    const found = await detectMany(aiKey(), blob);
+    if (!batch) return;
+    if (!found.length) { batch.status = "Aucun vêtement reconnu sur cette photo. Essaie avec plus de lumière, ou des pièces moins serrées."; renderBatch(); return; }
+    const bmp = window.createImageBitmap ? await createImageBitmap(blob) : null;
+    for (const f of found) {
+      const e = { status: "ok", keep: true, rec: f, name: f.name, blob: null, cutBlob: null, url: null };
+      if (bmp && f.box) {
+        e.blob = await cropBox(bmp, f.box);
+        // détourage si la pièce est posée sur un fond uni (lit, sol) ; sinon on garde le cadrage
+        try { const cr = await removeBackground(e.blob); if (cr.ok) e.cutBlob = cr.blob; } catch (x) {}
+        e.url = URL.createObjectURL(e.cutBlob || e.blob);
+      }
+      batch.entries.push(e);
+    }
+    batch.status = found.length + " pièce" + (found.length > 1 ? "s" : "") + " trouvée" + (found.length > 1 ? "s" : "") + " sur la photo.";
+  } catch (err) { if (batch) batch.status = aiErrText(err); }
+  renderBatch();
+}
+
+function queueSingle(blob) {
+  batch.chooser = false;
+  const e = { status: "wait", keep: true, blob, cutBlob: null, url: URL.createObjectURL(blob), rec: null, name: "" };
+  batch.entries.push(e); batch.queue.push(e);
+  renderBatch(); pumpQueue();
+}
+function pumpQueue() {
+  while (batch && batch.running < 2 && batch.queue.length) {
+    const e = batch.queue.shift(); batch.running++;
+    processSingle(e).finally(() => { if (!batch) return; batch.running--; renderBatch(); pumpQueue(); });
+  }
+}
+async function processSingle(e) {
+  const b = batch;
+  e.status = "busy"; renderBatch();
+  try { const cr = await removeBackground(e.blob); if (cr.ok) { e.cutBlob = cr.blob; URL.revokeObjectURL(e.url); e.url = URL.createObjectURL(cr.blob); } } catch (x) {}
+  try {
+    const rec = await recognizeItem(aiKey(), e.cutBlob || e.blob);
+    if (!rec.color) { try { const col = await detectColor(e.cutBlob || e.blob, { cut: !!e.cutBlob }); if (col) rec.color = col.color; } catch (x) {} }
+    e.rec = rec; e.name = rec.name || "Vêtement"; e.status = "ok";
+  } catch (err) { e.status = "err"; e.err = aiErrText(err); }
+  if (batch !== b) return;
+}
+
+/** Fiche complète à partir de la reconnaissance, avec les mêmes devinettes que la fiche d'ajout. */
+function itemFromRec(rec, name) {
+  const g = guess(name, { weekdayOcc: weekdayOcc() });
+  const cat = rec.cat || g.cat || "haut";
+  const acc = cat === "accessoire" ? rec.acc || g.acc || "sac" : null;
+  const warmth = rec.warmth || g.warmth || 2;
+  const material = rec.material || g.material || null;
+  return {
+    name, cat, acc, color: rec.color || "noir", pattern: rec.pattern || g.pattern || "uni", warmth, material,
+    seasons: rec.seasons && rec.seasons.length ? rec.seasons : seasonsFor({ cat, acc, warmth, material }),
+    occ: rec.occ && rec.occ.length ? rec.occ : g.occ, styles: rec.styles && rec.styles.length ? rec.styles : g.styles || [],
+    rain: rec.rain || g.rain || "normal", brand: rec.brand || null, dirty: false
+  };
+}
+
+async function saveBatch() {
+  const list = batch.entries.filter((e) => e.status === "ok" && e.keep);
+  if (!list.length) return;
+  const items = [];
+  try {
+    for (let i = 0; i < list.length; i++) {
+      batch.saving = "Ajout " + (i + 1) + " / " + list.length + "…"; renderBatch();
+      const e = list[i], id = uid();
+      const name = (e.name || "").trim() || e.rec.name || "Vêtement";
+      let photo = null, cut = null;
+      if (e.blob) photo = await sync.uploadPhoto(e.blob, id);
+      if (e.cutBlob) cut = await sync.uploadPhoto(e.cutBlob, id, "-cut");
+      items.push({ id, ...itemFromRec(e.rec, name), photo, cut, createdAt: Date.now(), updatedAt: Date.now() });
+      e.added = true;
+    }
+  } catch (err) {
+    batch.saving = false;
+    batch.status = (err.status === 0 ? "Pas de connexion" : "L'envoi a été interrompu") + " : " + items.length + " pièce(s) ajoutée(s) sur " + list.length + ". Touche « Ajouter » pour réessayer les autres.";
+    // celles qui sont parties sont enregistrées ci-dessous et retirées de la liste
+    batch.entries = batch.entries.filter((e) => !e.added);
+  }
+  if (items.length) sync.change((d) => { d.items.push(...items); });
+  if (batch.saving) { const n = items.length; closeBatch(); toast(n + " pièce" + (n > 1 ? "s" : "") + " ajoutée" + (n > 1 ? "s" : "") + " au dressing."); }
+  else renderBatch();
+}
+
+async function batchAction(act) {
+  if (["group-cam", "group-file", "many-file", "burst"].includes(act)) batch.chooser = false;
+  if (act === "close") { if (batch && batch.saving) return; closeBatch(); return; }
+  if (act === "settings") { closeBatch(); showTab("settings"); return; }
+  if (act === "group-cam") {
+    try { const b = await takePhoto({ full: true }); if (b) runGroup(b); } catch (e) { $("b-file-one").click(); }
+    return;
+  }
+  if (act === "group-file") { $("b-file-one").click(); return; }
+  if (act === "many-file") { $("b-file-many").click(); return; }
+  if (act === "burst") {
+    try { await takePhotos((b) => queueSingle(b)); } catch (e) { $("b-file-many").click(); }
+    return;
+  }
+  if (act === "more") { batch.chooser = true; renderBatch(); return; }
+  if (act === "back") { batch.chooser = false; renderBatch(); return; }
+  if (act === "save") saveBatch();
+}
 // ---------------- RÉGLAGES ----------------
 function renderSettings() {
   const profiles = getProfiles(), active = getActiveId();
@@ -1546,6 +1731,19 @@ function bind() {
   });
   delegate("with-sheet", "wa", (act, b) => withAction(act, b));
   on("with-overlay", "click", (e) => { if (e.target === $("with-overlay")) $("with-overlay").hidden = true; });
+
+  on("btn-batch", "click", openBatch);
+  delegate("batch-sheet", "bt", (act) => batchAction(act));
+  delegate("batch-sheet", "bk", (i) => { const e = batch.entries[+i]; e.keep = !e.keep; renderBatch(); });
+  on("batch-sheet", "input", (e) => { const i = e.target.dataset.bn; if (i !== undefined && batch) batch.entries[+i].name = e.target.value; });
+  on("b-file-one", "change", async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f || !batch) return;
+    try { runGroup(await resizeFile(f, 1800)); } catch (x) { batch.status = "Cette image n'a pas pu être lue."; renderBatch(); }
+  });
+  on("b-file-many", "change", async (e) => {
+    const fs = [...(e.target.files || [])]; e.target.value = ""; if (!batch) return;
+    for (const f of fs.slice(0, 40)) { try { queueSingle(await resizeFile(f, 900)); } catch (x) {} }
+  });
 
   // valises
   on("btn-new-trip", "click", openTripForm);

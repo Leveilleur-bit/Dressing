@@ -80,6 +80,8 @@ La même clé sert à trois choses, chacune à environ 1 centime :
 - **Reconnaître le vêtement** : la photo détourée du vêtement est envoyée pour remplir la fiche (nom, catégorie, couleur, matière, saisons…) ; c'est automatique quand on ajoute une photo et que le nom est encore vide ;
 - **Photographier l'étiquette** : la photo de l'étiquette est envoyée pour lire la marque, la taille, la composition et l'entretien ; elle n'est pas conservée.
 
+- **Ajouter plusieurs vêtements** (onglet Dressing) : une photo de penderie, de pile ou de lit où la styliste liste et découpe chaque pièce (environ 2 centimes la photo), ou une rafale de photos (une par pièce) traitée pendant qu'on photographie (environ 1 centime la pièce).
+
 Sans clé, la couleur et le motif sont quand même détectés sur le téléphone à partir de la photo.
 
 ## Si un téléphone est perdu

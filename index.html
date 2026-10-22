@@ -113,6 +113,7 @@
         <div class="laundry-row" id="laundry-row"></div>
       </section>
       <button class="btn primary block" type="button" id="btn-add">Ajouter un vêtement</button>
+      <button class="btn block" type="button" id="btn-batch">Ajouter plusieurs vêtements</button>
       <div class="grid" id="grid"></div>
     </div>
 
@@ -411,6 +412,13 @@
 <!-- ============ TENUE ENREGISTRÉE ============ -->
 <div class="overlay" id="saved-overlay" hidden>
   <div class="sheet" id="saved-sheet"></div>
+</div>
+
+<!-- ============ AJOUT DE PLUSIEURS VÊTEMENTS ============ -->
+<div class="overlay" id="batch-overlay" hidden>
+  <div class="sheet" id="batch-sheet"></div>
+  <input class="visually-hidden" type="file" id="b-file-one" accept="image/*">
+  <input class="visually-hidden" type="file" id="b-file-many" accept="image/*" multiple>
 </div>
 
 <div class="toast" id="toast" role="status" hidden></div>

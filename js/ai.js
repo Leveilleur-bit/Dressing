@@ -126,10 +126,10 @@ async function toJpegB64(blob, max = 900) {
   return btoa(s);
 }
 
-async function askVision(key, blob, system, text) {
-  const data = await toJpegB64(blob);
+async function askVision(key, blob, system, text, { maxTokens = 700, size = 900 } = {}) {
+  const data = await toJpegB64(blob, size);
   const j = await call(key, {
-    model: AI_MODEL, max_tokens: 700, system,
+    model: AI_MODEL, max_tokens: maxTokens, system,
     messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data } }, { type: "text", text }] }]
   });
   const t = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
@@ -164,6 +164,10 @@ export async function recognizeItem(key, blob) {
   ].join("\n");
   const r = await askVision(key, blob, system, text);
   if (r.erreur) throw new AiError("notcloth", r.erreur);
+  return normalizeItem(r);
+}
+
+function normalizeItem(r) {
   const one = (v, list) => (list.some((x) => (x.id ?? x) === v) ? v : null);
   const many = (v, list) => (Array.isArray(v) ? v.filter((x) => list.some((y) => y.id === x)) : []);
   return {
@@ -214,4 +218,32 @@ export function materialFromComposition(comp) {
   const hit = map.find(([w]) => main.includes(w));
   const wool = comp.filter((c) => /laine|cachemire|mohair|alpaga/.test(c.m)).reduce((a, c) => a + (c.p || 0), 0);
   return { material: hit ? hit[1] : null, warmth: wool >= 50 ? 3 : main.includes("lin") ? 1 : null };
+}
+
+/** Plusieurs vêtements sur une même photo (penderie, pile, lit) : liste + position de chacun. */
+export async function detectMany(key, blob) {
+  const system = "Tu catalogues des vêtements pour un dressing en ligne. Tu réponds uniquement en JSON strict, en français, sans texte autour.";
+  const text = [
+    "Liste TOUS les vêtements et accessoires distincts visibles sur cette photo (penderie, pile ou vêtements étalés), au maximum 30.",
+    "Ignore les cintres, meubles, personnes et objets qui ne sont pas des vêtements. Ne compte pas deux fois la même pièce.",
+    "Pour chaque pièce, donne sa position dans l'image : \"boite\": [gauche, haut, droite, bas] en millièmes de la largeur et de la hauteur (0 à 1000), en englobant la partie visible de la pièce.",
+    "Réponds avec ce JSON :",
+    '{"pieces": [{',
+    '"boite": [g, h, d, b],',
+    '"nom": "nom court et précis, 2 à 5 mots",',
+    `"categorie": [${ids(CATS)}], "accessoire": [${ids(ACC_TYPES)}] ou null,`,
+    `"couleur": [${Object.keys(COLORS).join(", ")}], "motif": ["uni", "motif"],`,
+    `"matiere": [${ids(MATERIALS)}] ou null, "epaisseur": 1 | 2 | 3,`,
+    `"saisons": [${ids(SEASONS)}], "occasions": [${ids(OCCS)}], "styles": 0 à 2 parmi [${ids(STYLE_TAGS)}],`,
+    '"pluie": "normal" | "impermeable" | "fragile", "marque": si lisible sinon null',
+    "}]}",
+    "Si aucun vêtement n'est visible, réponds {\"pieces\": []}."
+  ].join("\n");
+  const r = await askVision(key, blob, system, text, { maxTokens: 6000, size: 1400 });
+  const list = Array.isArray(r.pieces) ? r.pieces : [];
+  return list.slice(0, 30).map((p) => {
+    const b = Array.isArray(p.boite) && p.boite.length === 4 ? p.boite.map((v) => Math.max(0, Math.min(1000, +v || 0)) / 1000) : null;
+    const box = b && b[2] > b[0] && b[3] > b[1] ? b : null;
+    return { ...normalizeItem(p), box };
+  }).filter((x) => x.name || x.cat);
 }

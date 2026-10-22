@@ -312,3 +312,18 @@ input[type="date"], input[type="number"] { width: 100%; font: inherit; padding: 
 .ai-btn { border-color: var(--accent); color: var(--accent); }
 .ai-btn:disabled { opacity: .7; }
 .brands .chip { font-size: .85rem; padding: 6px 11px; }
+
+/* ajout de plusieurs vêtements */
+.batch-mode { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: var(--radius); background: var(--bg); }
+.batch-mode h3 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 1.1rem; }
+.batch-status { font-weight: 600; color: var(--fg); }
+.batch-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.batch-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 34px; gap: 10px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.batch-row:last-child { border-bottom: 0; }
+.batch-row.off { opacity: .45; }
+.batch-row .thumb { border-radius: 10px; }
+.batch-row .thumb img { object-fit: cover; }
+.batch-row .thumb.is-cut img { object-fit: contain; padding: 6%; }
+.batch-name { padding: 7px 9px !important; font-size: .95rem !important; }
+.check-btn { width: 30px; height: 30px; border-radius: 8px; border: 2px solid var(--line); background: none; font-weight: 700; color: var(--surface); padding: 0; }
+.check-btn[aria-pressed="true"] { background: var(--good); border-color: var(--good); }
