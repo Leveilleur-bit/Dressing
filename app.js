@@ -1,6 +1,7 @@
 import { CATS, COLORS, WARM, PATTERNS, RAIN, SEASONS, OCCS, MOODS, MANUAL_TEMPS, GLYPH, ACC_TYPES, demoItems } from "./js/catalog.js";
 import { guess, seasonsFor } from "./js/guess.js";
-import { suggest, seasonOf, missingNote, comboKey, daysBetween, planTrip } from "./js/engine.js";
+import { suggest, suggestMany, seasonOf, missingNote, comboKey, daysBetween, planTrip } from "./js/engine.js";
+import { suggestGaps, MILESTONES } from "./js/gaps.js";
 import { Sync, LS, uid, getProfiles, saveProfiles, getActiveId, setActiveId } from "./js/store.js";
 import { Repo, parseRepo } from "./js/github.js";
 import { fetchTwoDays, fetchRange, searchCity, locate } from "./js/weather.js";
@@ -9,14 +10,14 @@ import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
 import { askStylist, testKey, AiError } from "./js/ai.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.4.2";
+const VERSION = "1.5.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 // ---------------- état ----------------
 let sync = null;               // synchronisation du profil actif (null = exemple)
 let doc = null;                // données du dressing affiché
-let demoDoc = { items: demoItems(), history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {}, week: null };
+let demoDoc = { items: demoItems(), history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {}, week: null, outfits: {} };
 let tripDraft = null, openTripId = null;
 let aiBusy = false;
 let dayOffset = new Date().getHours() >= 19 ? 1 : 0;
@@ -88,16 +89,18 @@ function catLabel(p) {
   if (p.cat === "accessoire") return ((ACC_TYPES.find((a) => a.id === p.acc) || {}).label || "Accessoire").split(" /")[0];
   return (CATS.find((x) => x.id === p.cat) || {}).label || "";
 }
-function glyph(cat, color, acc) {
+function glyph(cat, color, acc, name) {
   const hex = (COLORS[color] || COLORS.gris)[1];
-  const path = (cat === "accessoire" && GLYPH["acc_" + acc]) || GLYPH[cat] || GLYPH.haut;
+  const n = String(name || "").toLowerCase();
+  const variant = cat === "bas" && /jupe/.test(n) ? GLYPH.bas_jupe : cat === "bas" && /short|bermuda/.test(n) ? GLYPH.bas_short : null;
+  const path = (cat === "accessoire" && GLYPH["acc_" + acc]) || variant || GLYPH[cat] || GLYPH.haut;
   return '<svg viewBox="0 0 64 64" aria-hidden="true"><path fill-rule="evenodd" d="' + path + '" fill="' + hex + '" stroke="currentColor" stroke-opacity=".55" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 }
 function thumb(it, tag, tagRight, extraAttr = "") {
   const path = it.cut || it.photo;
   const isCut = !!(it.previewUrl ? it.previewIsCut : it.cut);
   const photoAttr = path && sync && !it.previewUrl ? ' data-photo="' + esc(path) + '" data-alt="' + esc(it.name) + '"' : "";
-  const preview = it.previewUrl ? '<img src="' + esc(it.previewUrl) + '" alt="">' : glyph(it.cat, it.color, it.acc);
+  const preview = it.previewUrl ? '<img src="' + esc(it.previewUrl) + '" alt="">' : glyph(it.cat, it.color, it.acc, it.name);
   return '<div class="thumb' + (isCut ? " is-cut" : "") + '"' + photoAttr + extraAttr + ">" + preview +
     (tag ? '<span class="tag">' + esc(tag) + "</span>" : "") +
     (tagRight ? '<span class="tag right plain">' + esc(tagRight) + "</span>" : "") + "</div>";
@@ -158,7 +161,7 @@ function flatlay(pieces, small = false) {
     const path = p.cut || p.photo;
     const kind = p.cut ? "fl-cut" : p.photo ? "fl-photo" : "fl-glyph";
     const data = path && sync ? ' data-photo="' + esc(path) + '" data-alt="' + esc(p.name) + '"' : "";
-    return '<div class="fl-item ' + kind + '" style="left:' + s.l + "%;top:" + s.t + "%;width:" + s.w + "%;height:" + s.h + "%;z-index:" + s.z + ";animation-delay:" + i * 0.05 + 's"' + data + ' title="' + esc(p.name) + '">' + glyph(p.cat, p.color, p.acc) + "</div>";
+    return '<div class="fl-item ' + kind + '" style="left:' + s.l + "%;top:" + s.t + "%;width:" + s.w + "%;height:" + s.h + "%;z-index:" + s.z + ";animation-delay:" + i * 0.05 + 's"' + data + ' title="' + esc(p.name) + '">' + glyph(p.cat, p.color, p.acc, p.name) + "</div>";
   }).join("");
   return '<div class="flatlay' + (small ? " small" : "") + '">' + html + "</div>";
 }
@@ -446,6 +449,7 @@ function setPrefs(patch) {
 function renderWardrobe() {
   const all = liveItems();
   $("count").textContent = isDemo() ? "exemple" : all.length + " pièce" + (all.length > 1 ? "s" : "");
+  renderProgress(all);
   const isHome = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
   const inFilter = (i, f) => f === "tous" ? true : f === "maison" ? (i.occ || []).includes("maison") : f === "trier" ? toSort(i) : i.cat === f;
   $("cat-filter").innerHTML = [{ id: "tous", label: "Tout" }].concat(CATS, [{ id: "maison", label: "Maison" }, { id: "trier", label: "À trier" }]).map((c) => {
@@ -567,7 +571,7 @@ function boardTile(p) {
   const path = p.cut || p.photo;
   const kind = p.cut ? "fl-cut" : p.photo ? "fl-photo" : "fl-glyph";
   const data = path && sync ? ' data-photo="' + esc(path) + '" data-alt="' + esc(p.name) + '"' : "";
-  return '<div class="board-item ' + kind + '"' + data + ' title="' + esc(p.name) + '">' + glyph(p.cat, p.color, p.acc) + "</div>";
+  return '<div class="board-item ' + kind + '"' + data + ' title="' + esc(p.name) + '">' + glyph(p.cat, p.color, p.acc, p.name) + "</div>";
 }
 
 function renderWeek() {
@@ -754,6 +758,189 @@ function toggleCheck(itemId) {
   });
 }
 
+
+// ---------------- PROGRESSION ET PIÈCES QUI MANQUENT ----------------
+function renderProgress(all) {
+  const pr = $("progress"), gp = $("gaps");
+  if (isDemo()) { pr.hidden = true; gp.hidden = true; return; }
+  const n = all.filter((i) => i.cat !== "accessoire").length;
+  const next = MILESTONES.find((m) => m.n > n);
+  const prev = [...MILESTONES].reverse().find((m) => m.n <= n);
+  const missingCats = [["haut", "un haut"], ["bas", "un bas"], ["chaussures", "des chaussures"], ["veste", "une veste"]].filter(([c]) => !all.some((i) => i.cat === c)).map(([, l]) => l);
+  if (next) {
+    const from = prev ? prev.n : 0;
+    const pct = Math.round(((n - from) / (next.n - from)) * 100);
+    pr.innerHTML = '<div class="outfit-head"><span class="label">Ton dressing</span><span class="progress">' + n + " / " + next.n + " pièces</span></div>" +
+      '<div class="bar"><span style="width:' + Math.max(4, pct) + '%"></span></div>' +
+      '<p class="note">' + (prev ? "Palier " + prev.n + " atteint : " + esc(prev.msg) + ". " : "") + "Encore " + (next.n - n) + " pièce" + (next.n - n > 1 ? "s" : "") + " avant " + next.n + " : " + esc(next.msg) + "." +
+      (missingCats.length ? " Il manque encore " + missingCats.join(", ") + "." : "") + "</p>";
+  } else {
+    pr.innerHTML = '<div class="outfit-head"><span class="label">Ton dressing</span><span class="progress">' + n + " pièces</span></div><div class=\"bar\"><span style=\"width:100%\"></span></div><p class=\"note\">Dressing complet. Pense au filtre « À trier » de temps en temps.</p>";
+  }
+  pr.hidden = false;
+  if (n < 4) { gp.hidden = true; return; }
+  const { total, gaps } = suggestGaps(all);
+  gp.innerHTML = '<div class="outfit-head"><span class="label">Pour plus de tenues</span><span class="progress">' + (total >= 2000 ? "2000+" : total) + " tenue" + (total > 1 ? "s" : "") + " possibles</span></div>" +
+    (gaps.length ? '<ul class="gap-list">' + gaps.map((g) => '<li><span>Ajoute <strong>' + esc(g.label) + "</strong></span><span class=\"gain\">+" + g.gain + (g.cat === "veste" ? " tenues couvertes" : " tenues") + "</span></li>").join("") + "</ul>" +
+      '<p class="note small">D\'après ce que tu as déjà : couleurs, saisons et occasions qui vont ensemble. Utile avant les soldes.</p>'
+      : '<p class="note">Ton dressing est bien équilibré : aucune pièce de base n\'ajouterait beaucoup de tenues.</p>');
+  gp.hidden = false;
+}
+
+// ---------------- MES TENUES ----------------
+const liveOutfits = () => Object.entries(data().outfits || {}).filter(([, o]) => o && !o.deleted && o.ids && o.ids.length).map(([id, o]) => ({ id, ...o })).sort((a, b) => (b.t || 0) - (a.t || 0));
+const SOURCE = { moi: "Composée", aime: "Aimée", avec: "Que porter avec", styliste: "Styliste" };
+
+function keepOutfit(pieces, source, name) {
+  const ids = pieces.map((p) => p.id);
+  const k = comboKey(pieces);
+  const exists = liveOutfits().find((o) => comboKey(o.ids.map((id) => ({ id }))) === k);
+  if (exists) return exists.id;
+  const id = uid();
+  let auto = name || (pieces.find((p) => p.cat === "haut" || p.cat === "robe") || pieces[0]).name + " & " + ((pieces.find((p) => p.cat === "bas") || pieces[pieces.length - 1]).name);
+  if (liveOutfits().some((o) => o.name === auto)) { const sh = pieces.find((p) => p.cat === "chaussures"); auto += sh ? " · " + sh.name : " (" + (liveOutfits().length + 1) + ")"; }
+  mutate((d) => { d.outfits = d.outfits || {}; d.outfits[id] = { name: auto, ids, source, t: Date.now() }; });
+  return id;
+}
+
+function renderOutfits() {
+  const grid = $("outfits-grid");
+  const byId = new Map(liveItems().map((i) => [i.id, i]));
+  const list = liveOutfits();
+  grid.innerHTML = list.length ? list.map((o) => {
+    const pieces = o.ids.map((id) => byId.get(id)).filter(Boolean);
+    return '<button type="button" class="outfit-card" data-saved="' + esc(o.id) + '">' + flatlay(pieces, true) +
+      '<span class="piece-name">' + esc(o.name) + '</span><span class="piece-meta">' + esc(SOURCE[o.source] || "") + (pieces.length < o.ids.length ? " · pièce supprimée" : "") + "</span></button>";
+  }).join("") : '<p class="empty">Aucune tenue gardée pour l\'instant. Compose-en une, appuie sur « J\'aime » sous la tenue du jour, ou garde une idée depuis « Que porter avec… ? ».</p>';
+  hydratePhotos(grid);
+}
+
+function wearPieces(pieces, reason) {
+  showTab("today");
+  const c = context();
+  current = { key: comboKey(pieces.filter((p) => p.cat !== "accessoire")), pieces, reasons: [reason] };
+  seen = [current.key]; lastCtxKey = ctxKey(c); wornKey = null;
+  renderOutfit(); savePick(c);
+  toast(dayOffset === 0 ? "C'est ta tenue du jour." : "C'est ta tenue de demain.");
+}
+
+function openSaved(id) {
+  const o = (data().outfits || {})[id]; if (!o) return;
+  const byId = new Map(liveItems().map((i) => [i.id, i]));
+  const pieces = o.ids.map((x) => byId.get(x)).filter(Boolean);
+  const dirty = pieces.filter((p) => p.dirty);
+  $("saved-sheet").innerHTML = '<div class="sheet-head"><h2>' + esc(o.name) + '</h2><button class="x" type="button" data-sv="close" aria-label="Fermer">✕</button></div>' +
+    flatlay(pieces) +
+    '<ul class="fl-list">' + pieces.map((p) => '<li><span class="tag">' + esc(catLabel(p)) + '</span><span class="piece-name">' + esc(p.name) + '</span><span class="piece-meta">' + (p.dirty ? "au sale" : wornText(p)) + "</span></li>").join("") + "</ul>" +
+    (dirty.length ? '<p class="note">' + esc(dirty.map((p) => p.name).join(", ")) + (dirty.length > 1 ? " sont" : " est") + " au sale.</p>" : "") +
+    '<button class="btn primary block" type="button" data-sv="wear">La porter ' + (dayOffset === 0 ? "aujourd'hui" : "demain") + "</button>" +
+    '<div class="actions"><button class="btn danger" type="button" data-sv="delete">Supprimer</button><button class="btn" type="button" data-sv="edit">Modifier</button></div>';
+  $("saved-sheet").dataset.id = id;
+  hydratePhotos($("saved-sheet"));
+  $("saved-overlay").hidden = false; $("saved-sheet").scrollTop = 0;
+}
+function savedAction(act, b) {
+  const id = $("saved-sheet").dataset.id; const o = (data().outfits || {})[id];
+  if (act === "close" || !o) { $("saved-overlay").hidden = true; return; }
+  const byId = new Map(liveItems().map((i) => [i.id, i]));
+  const pieces = o.ids.map((x) => byId.get(x)).filter(Boolean);
+  if (act === "wear") { $("saved-overlay").hidden = true; wearPieces(pieces, "Une de tes tenues : « " + o.name + " »."); return; }
+  if (act === "edit") { $("saved-overlay").hidden = true; openCompose(id); return; }
+  if (act === "delete") {
+    if (!b.dataset.confirm) { b.dataset.confirm = "1"; b.textContent = "Confirmer"; return; }
+    mutate((d) => { d.outfits[id] = { deleted: true, t: Date.now() }; });
+    $("saved-overlay").hidden = true; toast("Tenue supprimée.");
+  }
+}
+
+// composer
+let compose = null;
+const SINGLE = { bas: 1, robe: 1, veste: 1, chaussures: 1, haut: 2, accessoire: 4 };
+function openCompose(id) {
+  if (isDemo()) { openProfile(null); return; }
+  const o = id ? (data().outfits || {})[id] : null;
+  const valid = new Set(liveItems().map((i) => i.id));
+  compose = { id: id || null, ids: o ? o.ids.filter((x) => valid.has(x)) : [], cat: "haut" };
+  $("compose-title").textContent = id ? "Modifier la tenue" : "Nouvelle tenue";
+  $("c-name").value = o ? o.name : "";
+  $("btn-c-del").hidden = !id; $("btn-c-del").dataset.confirm = ""; $("btn-c-del").textContent = "Supprimer";
+  $("c-err").hidden = true;
+  renderCompose();
+  $("compose-overlay").hidden = false; $("compose-form").scrollTop = 0;
+}
+function renderCompose() {
+  const items = liveItems();
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const sel = compose.ids.map((x) => byId.get(x)).filter(Boolean);
+  $("c-preview").innerHTML = sel.length ? flatlay(sel) : '<div class="flatlay empty-lay"><span>Touche des pièces ci-dessous</span></div>';
+  const groups = CATS.map((c) => {
+    const its = items.filter((i) => i.cat === c.id);
+    if (!its.length) return "";
+    return '<div class="group"><span class="label">' + c.label + '</span><div class="pick-row">' + its.map((i) =>
+      '<button type="button" class="pick' + (compose.ids.includes(i.id) ? " on" : "") + '" data-pk="' + esc(i.id) + '" aria-pressed="' + compose.ids.includes(i.id) + '">' + thumb(i) + '<span class="piece-meta">' + esc(i.name) + "</span></button>").join("") + "</div></div>";
+  }).join("");
+  $("c-picker").innerHTML = groups || '<p class="empty">Ajoute d\'abord des vêtements à ton dressing.</p>';
+  hydratePhotos($("compose-overlay"));
+}
+function togglePick(id) {
+  const it = liveItems().find((i) => i.id === id); if (!it) return;
+  if (compose.ids.includes(id)) compose.ids = compose.ids.filter((x) => x !== id);
+  else {
+    const byId = new Map(liveItems().map((i) => [i.id, i]));
+    const sameCat = compose.ids.filter((x) => (byId.get(x) || {}).cat === it.cat);
+    if (sameCat.length >= (SINGLE[it.cat] || 1)) compose.ids = compose.ids.filter((x) => x !== sameCat[0]);
+    // une robe remplace haut + bas, et inversement
+    if (it.cat === "robe") compose.ids = compose.ids.filter((x) => !["haut", "bas"].includes((byId.get(x) || {}).cat));
+    if (it.cat === "bas") compose.ids = compose.ids.filter((x) => (byId.get(x) || {}).cat !== "robe");
+    compose.ids.push(id);
+  }
+  renderCompose();
+}
+function saveCompose(e) {
+  e.preventDefault();
+  const err = $("c-err");
+  const byId = new Map(liveItems().map((i) => [i.id, i]));
+  const sel = compose.ids.map((x) => byId.get(x)).filter(Boolean);
+  if (sel.length < 2) return showErr(err, "Choisis au moins deux pièces.");
+  const name = $("c-name").value.trim() || (sel.find((p) => p.cat === "haut" || p.cat === "robe") || sel[0]).name + " & " + (sel.find((p) => p.cat === "bas") || sel[sel.length - 1]).name;
+  const id = compose.id || uid();
+  mutate((d) => { d.outfits = d.outfits || {}; d.outfits[id] = { ...(d.outfits[id] || {}), name, ids: compose.ids.slice(), source: (d.outfits[id] && d.outfits[id].source) || "moi", t: Date.now() }; });
+  $("compose-overlay").hidden = true;
+  showWardrobeTab("outfits");
+  toast("Tenue « " + name + " » enregistrée.");
+}
+
+function showWardrobeTab(which) {
+  $("wd-pieces").hidden = which !== "pieces";
+  $("wd-outfits").hidden = which !== "outfits";
+  $("wd-tab-pieces").setAttribute("aria-pressed", which === "pieces");
+  $("wd-tab-outfits").setAttribute("aria-pressed", which === "outfits");
+}
+
+// ---------------- QUE PORTER AVEC ----------------
+let withResults = [];
+function openWith(item) {
+  let c = context();
+  const occNote = (item.occ || []).includes(c.occ) ? "" : (item.occ || [])[0];
+  if (occNote) c = { ...c, occ: occNote };
+  withResults = suggestMany({ items: liveItems(), feedback: data().feedback }, c, 4, { must: item });
+  const occLabel = (OCCS.find((o) => o.id === c.occ) || {}).label || "";
+  $("with-sheet").innerHTML = '<div class="sheet-head"><div><span class="label">Que porter avec</span><h2>' + esc(item.name) + '</h2></div><button class="x" type="button" data-wa="close" aria-label="Fermer">✕</button></div>' +
+    '<p class="note">' + (weather[dayOffset] ? "Pour la météo " + (dayOffset === 0 ? "d'aujourd'hui" : "de demain") : "Pour la saison") + " · " + esc(occLabel) + (item.dirty ? " · attention, cette pièce est au sale" : "") + "</p>" +
+    (withResults.length ? '<div class="with-grid">' + withResults.map((r, i) =>
+      '<div class="with-item">' + flatlay(r.pieces, true) + '<span class="piece-meta">' + esc(r.pieces.filter((p) => p.id !== item.id && p.cat !== "accessoire").map((p) => p.name).join(" · ")) + "</span>" +
+      '<div class="actions"><button class="btn small-btn" type="button" data-wa="keep" data-i="' + i + '">Garder</button><button class="btn primary small-btn" type="button" data-wa="wear" data-i="' + i + '">La porter</button></div></div>').join("") + "</div>"
+      : '<p class="empty">Pas assez de pièces qui vont avec pour l\'instant. Ajoute des hauts, des bas ou des chaussures.</p>');
+  hydratePhotos($("with-sheet"));
+  $("with-overlay").hidden = false; $("with-sheet").scrollTop = 0;
+}
+function withAction(act, b) {
+  if (act === "close") { $("with-overlay").hidden = true; return; }
+  const r = withResults[+b.dataset.i]; if (!r) return;
+  if (act === "wear") { $("with-overlay").hidden = true; wearPieces(r.pieces, "Choisie depuis « Que porter avec… ? »."); return; }
+  if (act === "keep") { keepOutfit(r.pieces, "avec"); b.textContent = "✓ Gardée"; b.disabled = true; }
+}
+
 // ---------------- RÉGLAGES ----------------
 function renderSettings() {
   const profiles = getProfiles(), active = getActiveId();
@@ -791,7 +978,7 @@ function renderHeader() {
 
 function renderAll() {
   renderHeader(); renderWeather(); renderControls(); refreshOutfit();
-  renderWardrobe(); renderAgenda(); renderSettings();
+  renderWardrobe(); renderOutfits(); renderAgenda(); renderSettings();
 }
 
 // ---------------- synchro : affichage de l'état ----------------
@@ -828,7 +1015,7 @@ let pickReady = false;
 function renderAfterData() {
   if (!pickReady && sync && sync.loaded) { pickReady = true; current = null; seen = []; }
   clearTimeout(dataTimer);
-  dataTimer = setTimeout(() => { refreshOutfit(); renderWardrobe(); renderAgenda(); renderControls(); renderSettings(); }, 30);
+  dataTimer = setTimeout(() => { refreshOutfit(); renderWardrobe(); renderOutfits(); renderAgenda(); renderControls(); renderSettings(); }, 30);
 }
 
 function openProfile(p) {
@@ -942,6 +1129,7 @@ function openItem(it) {
   $("btn-camera").hidden = !cameraSupported();
   renderItemSheet();
   $("btn-save-next").hidden = !!it;
+  $("btn-with").hidden = !it;
   $("item-overlay").hidden = false;
   $("item-form").scrollTop = 0;
 }
@@ -1133,7 +1321,8 @@ function bind() {
     const v = fb && fb.v === 1 ? 0 : 1;
     const apply = (d) => { d.feedback = d.feedback || {}; d.feedback[current.key] = { v, t: Date.now() }; };
     if (isDemo()) { apply(demoDoc); renderOutfit(); } else sync.change(apply);
-    toast(v ? "Noté : l'appli te proposera plus souvent ce genre de tenue." : "Retiré de tes tenues aimées.");
+    if (v) keepOutfit(current.pieces, "aime", current.title || "");
+    toast(v ? "Noté, et gardée dans « Mes tenues »." : "Retiré de tes tenues aimées.");
   });
   on("btn-dislike", "click", () => {
     if (!current) return;
@@ -1177,6 +1366,7 @@ function bind() {
   delegate("f-occ", "o", (v) => { draft.occ = draft.occ.includes(v) ? draft.occ.filter((x) => x !== v) : draft.occ.concat(v); touch("occ"); refill(); });
   delegate("f-dirty", "d", (v) => { draft.dirty = v === "true"; renderItemSheet(); });
   on("btn-del", "click", deleteItem);
+  on("btn-with", "click", () => { const it = editing && liveItems().find((i) => i.id === editing.id); if (!it) return; closeItem(); openWith(it); });
   delegate("f-cutmode", "cm", (v) => { draft.useCut = v === "true"; renderItemSheet(); });
   on("btn-cut", "click", async () => {
     if (!draft || !draft.photo) return;
@@ -1227,6 +1417,25 @@ function bind() {
   on("day-overlay", "click", (e) => { if (e.target === $("day-overlay")) $("day-overlay").hidden = true; });
 
   delegate("week", "wk-act", (act, b) => weekAction(act, b));
+  on("wd-tab-pieces", "click", () => showWardrobeTab("pieces"));
+  on("wd-tab-outfits", "click", () => showWardrobeTab("outfits"));
+  on("btn-compose", "click", () => openCompose(null));
+  delegate("outfits-grid", "saved", (id) => openSaved(id));
+  delegate("saved-sheet", "sv", (act, b) => savedAction(act, b));
+  on("saved-overlay", "click", (e) => { if (e.target === $("saved-overlay")) $("saved-overlay").hidden = true; });
+  delegate("c-picker", "pk", (id) => togglePick(id));
+  on("compose-form", "submit", saveCompose);
+  on("compose-close", "click", () => ($("compose-overlay").hidden = true));
+  on("compose-overlay", "click", (e) => { if (e.target === $("compose-overlay")) $("compose-overlay").hidden = true; });
+  on("btn-c-del", "click", () => {
+    const b = $("btn-c-del");
+    if (!b.dataset.confirm) { b.dataset.confirm = "1"; b.textContent = "Confirmer"; return; }
+    const id = compose.id; mutate((d) => { d.outfits[id] = { deleted: true, t: Date.now() }; });
+    $("compose-overlay").hidden = true; toast("Tenue supprimée.");
+  });
+  delegate("with-sheet", "wa", (act, b) => withAction(act, b));
+  on("with-overlay", "click", (e) => { if (e.target === $("with-overlay")) $("with-overlay").hidden = true; });
+
   // valises
   on("btn-new-trip", "click", openTripForm);
   delegate("trips", "trip", (id) => openTrip(id));
@@ -1319,6 +1528,7 @@ function bind() {
     if (e.key !== "Escape") return;
     if (!$("item-overlay").hidden) closeItem();
     $("profile-overlay").hidden = true; $("day-overlay").hidden = true; $("trip-overlay").hidden = true;
+    $("with-overlay").hidden = true; $("compose-overlay").hidden = true; $("saved-overlay").hidden = true;
     if (!$("tripview-overlay").hidden) { $("tripview-overlay").hidden = true; openTripId = null; }
   });
   let shownDay = dayStr(0);

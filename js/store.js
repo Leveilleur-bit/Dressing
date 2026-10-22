@@ -9,7 +9,7 @@ const LS = {
 };
 export { LS };
 
-export const emptyDoc = () => ({ app: "dressing-du-matin", version: 1, items: [], history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {} });
+export const emptyDoc = () => ({ app: "dressing-du-matin", version: 1, items: [], history: [], feedback: {}, agenda: {}, prefs: { styles: [], note: "", t: 0 }, trips: {}, outfits: {} });
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -47,6 +47,7 @@ export function merge(local, remote) {
     agenda: mergeMap(remote.agenda, local.agenda),
     trips: mergeMap(remote.trips, local.trips),
     picks: mergeMap(remote.picks, local.picks),
+    outfits: mergeMap(remote.outfits, local.outfits),
     week: ((local.week && local.week.t) || 0) > ((remote.week && remote.week.t) || 0) ? local.week : remote.week || null,
     prefs: ((local.prefs && local.prefs.t) || 0) > ((remote.prefs && remote.prefs.t) || 0) ? local.prefs : remote.prefs || emptyDoc().prefs
   };

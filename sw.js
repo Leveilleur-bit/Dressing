@@ -1,8 +1,8 @@
 // Garde l'appli disponible hors connexion. Les données (GitHub) et la météo passent toujours par le réseau.
-const CACHE = "dressing-app-v1.4.2";
+const CACHE = "dressing-app-v1.5.0";
 const SHELL = [
   "./", "index.html", "styles.css", "app.js", "manifest.webmanifest",
-  "js/catalog.js", "js/engine.js", "js/store.js", "js/github.js", "js/weather.js", "js/camera.js", "js/styles.js", "js/ai.js", "js/guess.js", "js/cutout.js",
+  "js/catalog.js", "js/engine.js", "js/store.js", "js/github.js", "js/weather.js", "js/camera.js", "js/styles.js", "js/ai.js", "js/guess.js", "js/cutout.js", "js/gaps.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"
 ];
 

@@ -22,6 +22,9 @@ Et aussi :
 - l'**occasion par défaut** en semaine et le week-end, réglable pour chaque personne ;
 - la **valise** : destination, dates, météo sur place, une tenue par jour qui réutilise les mêmes pièces, et la liste à cocher.
 - le **détourage automatique** des photos : pose le vêtement à plat sur un drap ou un sol uni et contrasté, l'appli enlève le fond ;
+- **Que porter avec… ?** : depuis la fiche d'une pièce, 4 tenues construites autour d'elle ;
+- **Mes tenues** : les tenues que tu composes toi-même, celles que tu aimes et celles que tu gardes, à porter en un geste ;
+- **les pièces qui manquent** : les pièces de base qui ajouteraient le plus de tenues, et la progression du dressing par paliers ;
 - la tenue présentée en **flat lay** (haut, veste qui chevauche, bas, chaussures, sac), et la **garde-robe de la semaine** : une planche avec les pièces de la semaine et une tenue prévue pour chaque jour.
 
 ## Où sont les données

@@ -93,18 +93,33 @@
       <h2>Mon dressing</h2>
       <span class="count" id="count"></span>
     </div>
-    <input type="search" id="search" placeholder="Rechercher : jean, rouge, pull…" autocomplete="off" aria-label="Rechercher dans le dressing">
-    <div class="chips" id="cat-filter"></div>
-    <p class="hint" id="trier-hint" hidden>Pièces pas portées depuis 6 mois : à ressortir, donner ou vendre. Ouvre une pièce pour la supprimer du dressing.</p>
-    <section class="laundry" id="laundry" hidden>
-      <div class="outfit-head">
-        <span class="label">Au sale · propre tout seul après 7 jours</span>
-        <button type="button" class="link" id="btn-all-clean">Tout est lavé</button>
-      </div>
-      <div class="laundry-row" id="laundry-row"></div>
-    </section>
-    <button class="btn primary block" type="button" id="btn-add">Ajouter un vêtement</button>
-    <div class="grid" id="grid"></div>
+    <div class="seg" role="group" aria-label="Affichage">
+      <button type="button" id="wd-tab-pieces" aria-pressed="true">Pièces</button>
+      <button type="button" id="wd-tab-outfits" aria-pressed="false">Mes tenues</button>
+    </div>
+
+    <div class="view" id="wd-pieces">
+      <section class="progress-card" id="progress" hidden></section>
+      <section class="gaps" id="gaps" hidden></section>
+      <input type="search" id="search" placeholder="Rechercher : jean, rouge, pull…" autocomplete="off" aria-label="Rechercher dans le dressing">
+      <div class="chips" id="cat-filter"></div>
+      <p class="hint" id="trier-hint" hidden>Pièces pas portées depuis 6 mois : à ressortir, donner ou vendre. Ouvre une pièce pour la supprimer du dressing.</p>
+      <section class="laundry" id="laundry" hidden>
+        <div class="outfit-head">
+          <span class="label">Au sale · propre tout seul après 7 jours</span>
+          <button type="button" class="link" id="btn-all-clean">Tout est lavé</button>
+        </div>
+        <div class="laundry-row" id="laundry-row"></div>
+      </section>
+      <button class="btn primary block" type="button" id="btn-add">Ajouter un vêtement</button>
+      <div class="grid" id="grid"></div>
+    </div>
+
+    <div class="view" id="wd-outfits" hidden>
+      <p class="hint">Tes tenues à toi : celles que tu composes, celles que tu as aimées et celles gardées depuis « Que porter avec… ? ». Touche une tenue pour la porter.</p>
+      <button class="btn primary block" type="button" id="btn-compose">Composer une tenue</button>
+      <div class="outfits-grid" id="outfits-grid"></div>
+    </div>
   </main>
 
   <!-- ============ AGENDA ============ -->
@@ -236,6 +251,7 @@
         <div class="group"><span class="label">État</span><div class="chips" id="f-dirty"></div></div>
       </div>
     </details>
+    <button class="btn block" type="button" id="btn-with" hidden>Que porter avec ?</button>
     <p class="err" id="f-err" hidden></p>
     <div class="actions">
       <button class="btn danger" type="button" id="btn-del" hidden>Supprimer</button>
@@ -348,6 +364,38 @@
 <!-- ============ VALISE : DÉTAIL ============ -->
 <div class="overlay" id="tripview-overlay" hidden>
   <div class="sheet" id="tripview"></div>
+</div>
+
+<!-- ============ QUE PORTER AVEC ============ -->
+<div class="overlay" id="with-overlay" hidden>
+  <div class="sheet" id="with-sheet"></div>
+</div>
+
+<!-- ============ COMPOSER UNE TENUE ============ -->
+<div class="overlay" id="compose-overlay" hidden>
+  <form class="sheet" id="compose-form" novalidate>
+    <div class="sheet-head">
+      <h2 id="compose-title">Nouvelle tenue</h2>
+      <button class="x" type="button" id="compose-close" aria-label="Fermer">✕</button>
+    </div>
+    <div id="c-preview"></div>
+    <div class="group">
+      <label class="label" for="c-name">Nom de la tenue</label>
+      <input type="text" id="c-name" placeholder="ex. Bureau décontracté" maxlength="50" autocomplete="off">
+    </div>
+    <p class="note small">Touche les pièces pour les ajouter ou les retirer. Une seule pièce par catégorie, sauf les hauts (2, pour superposer) et les accessoires.</p>
+    <div id="c-picker" class="picker"></div>
+    <p class="err" id="c-err" hidden></p>
+    <div class="actions">
+      <button class="btn danger" type="button" id="btn-c-del" hidden>Supprimer</button>
+      <button class="btn primary" type="submit" id="btn-c-save">Enregistrer la tenue</button>
+    </div>
+  </form>
+</div>
+
+<!-- ============ TENUE ENREGISTRÉE ============ -->
+<div class="overlay" id="saved-overlay" hidden>
+  <div class="sheet" id="saved-sheet"></div>
 </div>
 
 <div class="toast" id="toast" role="status" hidden></div>

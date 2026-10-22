@@ -38,7 +38,8 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   const home = ctx.occ === "maison";
   // une pièce réservée à la maison ne sort jamais
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
-  const all = data.items.filter((i) => !i.deleted && !i.dirty && (home || !homeOnly(i)));
+  const must = opts.must || null; // « Que porter avec… ? » : cette pièce doit faire partie de la tenue
+  const all = data.items.filter((i) => !i.deleted && (!i.dirty || (must && i.id === must.id)) && (home || !homeOnly(i) || (must && i.id === must.id)));
   const items = all.filter((i) => i.cat !== "accessoire");
   const accessories = all.filter((i) => i.cat === "accessoire");
   const fb = data.feedback || {};
@@ -68,7 +69,14 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   const allowJacket = home ? cold < 16 : needJacket || cold < 21 || w.wind >= 35;
 
   const by = (c) => items.filter((i) => i.cat === c);
-  const tops = by("haut"), bottoms = by("bas"), dresses = by("robe"), jackets = by("veste"), shoes = by("chaussures");
+  let tops = by("haut"), bottoms = by("bas"), dresses = by("robe"), jackets = by("veste"), shoes = by("chaussures");
+  if (must) {
+    if (must.cat === "haut") { tops = [must]; dresses = []; }
+    if (must.cat === "bas") { bottoms = [must]; dresses = []; }
+    if (must.cat === "robe") { dresses = [must]; tops = []; bottoms = []; }
+    if (must.cat === "veste") jackets = [must];
+    if (must.cat === "chaussures") shoes = [must];
+  }
 
   const bases = [];
   tops.forEach((t) => bottoms.forEach((b) => bases.push([t, b])));
@@ -122,7 +130,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   const tries = Math.min(900, bases.length * Math.max(1, shoes.length) * (jackets.length + 1) * 3);
   for (let i = 0; i < tries; i++) {
     const pieces = pick(bases).slice();
-    if (allowJacket && jackets.length && (needJacket || Math.random() < 0.4)) pieces.unshift(pick(jackets));
+    if (jackets.length && ((must && must.cat === "veste") || (allowJacket && (needJacket || Math.random() < 0.4)))) pieces.unshift(pick(jackets));
     if (shoes.length) pieces.push(pick(shoes));
     const key = comboKey(pieces);
     if (combos.has(key) || disliked.has(key)) continue;
@@ -165,6 +173,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   const pool = cands.slice(0, 3).filter((c) => c.score >= cands[0].score - 3);
   const chosen = pool[Math.floor(Math.random() * pool.length)];
   const acc = home ? { pieces: [], reasons: [] } : pickAccessories(accessories, chosen.pieces, ctx, w, opts);
+  if (must && must.cat === "accessoire" && !acc.pieces.some((a) => a.id === must.id)) acc.pieces.push(must);
   const reasons = explain(chosen, ctx, { needJacket, layered, liked, pairScore });
   const popAcc = acc.pieces.some((a) => COLORS[a.color] && !COLORS[a.color][2]);
   const base = popAcc ? reasons.filter((r) => !r.startsWith("Tout en tons neutres")) : reasons;
@@ -296,3 +305,16 @@ export function missingNote(items, ctx) {
 }
 
 export { CATS };
+
+/** Plusieurs tenues différentes (ex. « Que porter avec… ? »). */
+export function suggestMany(data, ctx, n, opts = {}) {
+  const out = [], avoid = [];
+  for (let i = 0; i < n * 2 && out.length < n; i++) {
+    const r = suggest(data, ctx, avoid, opts);
+    if (!r) break;
+    if (avoid.includes(r.key)) break;
+    avoid.push(r.key);
+    out.push(r);
+  }
+  return out;
+}

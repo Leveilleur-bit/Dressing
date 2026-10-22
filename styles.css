@@ -280,3 +280,30 @@ input[type="date"], input[type="number"] { width: 100%; font: inherit; padding: 
 .worn-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 12px; background: var(--bg); }
 .worn-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: .92rem; }
 .fl-list li, .fl-list .piece-name { text-align: left; }
+
+/* progression et pièces qui manquent */
+.progress-card, .gaps { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
+.bar { height: 8px; border-radius: 99px; background: var(--bg); overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.gap-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.gap-list li { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; font-size: .94rem; }
+.gain { font-family: var(--font-mono); font-size: .8rem; color: var(--good); white-space: nowrap; }
+
+/* mes tenues */
+.outfits-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.outfit-card { background: none; border: 0; padding: 0; text-align: left; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.outfits-grid .empty { grid-column: 1 / -1; }
+.empty-lay { display: grid; place-items: center; color: var(--muted); font-size: .9rem; }
+.picker { display: flex; flex-direction: column; gap: 14px; }
+.pick-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.pick { flex: none; width: 78px; border: 2px solid transparent; border-radius: 12px; background: none; padding: 2px; display: flex; flex-direction: column; gap: 4px; text-align: left; }
+.pick .thumb { border-radius: 9px; }
+.pick .thumb svg { width: 64%; height: 64%; }
+.pick .piece-meta { font-size: .72rem; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pick.on { border-color: var(--accent); }
+
+/* que porter avec */
+.with-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.with-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.with-item .actions { gap: 6px; }
+.small-btn { padding: 8px 6px; font-size: .85rem; }
