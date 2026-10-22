@@ -11,7 +11,7 @@ import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromCom
 import { detectColor } from "./js/colorid.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.8.1";
+const VERSION = "1.9.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -418,15 +418,32 @@ async function askAi() {
   const byId = new Map(items.map((i) => [i.id, i]));
   const fb = data().feedback || {};
   const names = (k) => k.split("|").map((id) => byId.get(id)).filter(Boolean).map((i) => i.name).join(" + ");
-  const liked = Object.keys(fb).filter((k) => fb[k].v === 1).map(names).filter(Boolean);
-  const disliked = Object.keys(fb).filter((k) => fb[k].v === -1).map(names).filter(Boolean);
+  const recent = (v) => Object.keys(fb).filter((k) => fb[k].v === v).sort((a, b) => (fb[b].t || 0) - (fb[a].t || 0));
+  const liked = recent(1).map(names).filter(Boolean);
+  const disliked = recent(-1).map((k) => {
+    const n = names(k); if (!n) return "";
+    const f = fb[k]; const why = f.why === "piece" ? (byId.get(f.piece) ? "à cause de : " + byId.get(f.piece).name : "") : WHY[f.why] || "";
+    return why ? n + " (" + why.toLowerCase() + ")" : n;
+  }).filter(Boolean);
+  // ce qui revient dans les refus
+  const counts = {}; for (const k of recent(-1)) { const w = fb[k].why; if (w && w !== "piece") counts[w] = (counts[w] || 0) + 1; }
+  const lessons = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([w, n]) => WHY[w] + " (" + n + " fois)");
+  const noPieces = [...new Set(recent(-1).map((k) => fb[k].piece).filter((id) => byId.has(id)))].map((id) => byId.get(id).name);
+  // les tenues vraiment portées, les plus fréquentes d'abord (6 derniers mois)
+  const since = Date.now() - 183 * 864e5; const wornCount = new Map();
+  for (const h of data().history || []) {
+    if (h.deleted || (h.t && h.t < since)) continue;
+    const k = h.items.slice().sort().join("|"); wornCount.set(k, (wornCount.get(k) || 0) + 1);
+  }
+  const worn = [...wornCount].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, n]) => { const t = names(k); return t ? t + (n > 1 ? " (" + n + " fois)" : "") : ""; }).filter(Boolean);
+  const composed = liveOutfits().filter((o) => o.source === "moi").slice(0, 8).map((o) => o.ids.map((id) => byId.get(id)).filter(Boolean).map((i) => i.name).join(" + ")).filter(Boolean);
   try {
     const loadImage = (it) => {
       const path = it.cut || it.photo;
       if (!path || !sync) return Promise.resolve(null);
       return sync.photoUrl(path).then((u) => fetch(u)).then((r) => r.blob());
     };
-    const r = await askStylist(key, { items, ctx: c, weather: weather[dayOffset], prefs: prefs(), liked, disliked, current: current.pieces.map((p) => p.name).join(" + "), loadImage });
+    const r = await askStylist(key, { items, ctx: c, weather: weather[dayOffset], prefs: prefs(), liked, disliked, lessons, noPieces, worn, composed, current: current.pieces.map((p) => p.name).join(" + "), loadImage });
     const pieces = r.ids.map((id) => byId.get(id));
     current = { key: comboKey(pieces), pieces, reasons: r.why, tip: r.tip, title: r.title, ai: true };
     seen.push(current.key);
@@ -803,6 +820,28 @@ function renderProgress(all) {
       '<p class="note small">D\'après ce que tu as déjà : couleurs, saisons et occasions qui vont ensemble. Utile avant les soldes.</p>'
       : '<p class="note">Ton dressing est bien équilibré : aucune pièce de base n\'ajouterait beaucoup de tenues.</p>');
   gp.hidden = false;
+}
+
+// ---------------- POURQUOI CE REFUS ----------------
+const WHY = { couleurs: "Trop de couleurs", accord: "Couleurs qui ne vont pas ensemble", meteo: "Pas adaptée à la météo", occasion: "Pas pour l'occasion", style: "Pas mon style", confort: "Pas confortable", piece: "Une pièce me déplaît" };
+let whyFor = null;
+function askWhy(key, pieces) {
+  whyFor = { key, pieces };
+  $("why-q").textContent = "Noté. Qu'est-ce qui n'allait pas ? (la styliste s'en souviendra)";
+  $("why-chips").innerHTML = Object.entries(WHY).map(([k, l]) => '<button type="button" class="chip" data-why="' + k + '">' + esc(l) + "</button>").join("") +
+    '<button type="button" class="chip skip" data-why="skip">Passer</button>';
+  $("why-box").hidden = false;
+}
+function whyPieces() {
+  $("why-q").textContent = "Laquelle ?";
+  $("why-chips").innerHTML = whyFor.pieces.map((p) => '<button type="button" class="chip" data-piece="' + esc(p.id) + '">' + esc(p.name) + "</button>").join("") +
+    '<button type="button" class="chip skip" data-why="skip">Passer</button>';
+}
+function setWhy(key, extra) {
+  const apply = (d) => { d.feedback = d.feedback || {}; d.feedback[key] = { ...(d.feedback[key] || { v: -1 }), ...extra, t: Date.now() }; };
+  if (isDemo()) apply(demoDoc); else sync.change(apply);
+  $("why-box").hidden = true;
+  toast(extra.piece ? "Compris : cette pièce passera après les autres." : "Compris, c'est retenu.");
 }
 
 // ---------------- MES TENUES ----------------
@@ -1622,9 +1661,16 @@ function bind() {
     const key = current.key;
     const apply = (d) => { d.feedback = d.feedback || {}; d.feedback[key] = { v: -1, t: Date.now() }; };
     if (isDemo()) apply(demoDoc); else sync.change(apply);
-    toast("Noté : cette tenue ne te sera plus proposée.");
+    const refused = current.pieces.slice();
     newSuggestion(false);
+    askWhy(key, refused);
   });
+  delegate("why-chips", "why", (w) => {
+    if (w === "skip") { $("why-box").hidden = true; return; }
+    if (w === "piece") { whyPieces(); return; }
+    setWhy(whyFor.key, { why: w });
+  });
+  delegate("why-chips", "piece", (id) => setWhy(whyFor.key, { why: "piece", piece: id }));
   delegate("worn-box", "dirty", (id, b) => { setDirty(id, b.getAttribute("aria-pressed") !== "true"); });
   on("worn-box", "click", (e) => { if (e.target.id === "btn-unwear") unwearCurrent(); });
   on("btn-connect", "click", () => openProfile(null));

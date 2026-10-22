@@ -327,3 +327,9 @@ input[type="date"], input[type="number"] { width: 100%; font: inherit; padding: 
 .batch-name { padding: 7px 9px !important; font-size: .95rem !important; }
 .check-btn { width: 30px; height: 30px; border-radius: 8px; border: 2px solid var(--line); background: none; font-weight: 700; color: var(--surface); padding: 0; }
 .check-btn[aria-pressed="true"] { background: var(--good); border-color: var(--good); }
+
+/* raison d'un refus */
+.why-box { border: 1px dashed var(--line); border-radius: 12px; padding: 10px 12px; margin: 10px 0 4px; display: grid; gap: 8px; }
+.why-box .label { margin: 0; }
+.why-box .chip { cursor: pointer; }
+.why-box .chip.skip { color: var(--muted); }

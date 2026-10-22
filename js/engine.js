@@ -49,6 +49,13 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   const fb = data.feedback || {};
   const disliked = new Set(Object.keys(fb).filter((k) => fb[k].v === -1));
   const liked = new Set(Object.keys(fb).filter((k) => fb[k].v === 1));
+  // raisons des refus : une pièce qui déplaît, ou un défaut qui revient (trop de couleurs…)
+  const pieceNo = new Map(); const why = {};
+  for (const k of Object.keys(fb)) {
+    const f = fb[k]; if (f.v !== -1) continue;
+    if (f.why) why[f.why] = (why[f.why] || 0) + 1;
+    if (f.piece) pieceNo.set(f.piece, (pieceNo.get(f.piece) || 0) + 1);
+  }
 
   // apprentissage par paires : une paire présente dans des tenues aimées / refusées
   const pairScore = new Map();
@@ -152,6 +159,10 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
     if (cols.has("noir") && cols.has("marron")) s -= 1.5;
     if (cols.has("noir") && cols.has("marine")) s -= 1;
     if (accents.size > 1) s -= 1.5 * (accents.size - 1); // en plus de la pénalité ci-dessus
+    // ce que les refus ont appris
+    if (why.couleurs >= 2 && cols.size > 2) s -= 1.5 * (cols.size - 2);
+    if (why.couleurs >= 2 && accents.size) s -= 0.8;
+    for (const p of pieces) if (pieceNo.has(p.id)) s -= 2.5 * Math.min(3, pieceNo.get(p.id));
 
     // deux mailles ouvertes l'une sur l'autre, ou un gilet comme protection contre la pluie
     const jk = pieces.find((p) => p.cat === "veste");

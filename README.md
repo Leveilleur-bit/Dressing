@@ -10,7 +10,7 @@ Elle tient compte de :
 - **les couleurs** (une seule couleur vive sur une base neutre) et **les motifs** (un seul à la fois) ;
 - **la rotation** : ce que tu as porté récemment passe après le reste ;
 - **le linge sale** : une pièce « au sale » n'est plus proposée jusqu'à ce qu'elle soit lavée ;
-- **tes goûts** : « J'aime » et « Pas pour moi » apprennent ce qui te plaît ;
+- **tes goûts** : « J'aime » et « Pas pour moi » apprennent ce qui te plaît ; après un refus, l'appli demande pourquoi (trop de couleurs, pas de saison, une pièce qui déplaît…) et s'en souvient ;
 - **ton envie du jour** : confort, classe ou de la couleur.
 - **les accessoires** : écharpe, bonnet et gants quand il fait froid, lunettes et chapeau au soleil, sac, ceinture ou bijou assortis ;
 - **tes styles et créatrices** préférés (jusqu'à 3 par personne), et en option une **styliste IA**.
@@ -76,7 +76,7 @@ Sur un appareil partagé, on peut ajouter les deux profils et passer de l'un à 
 
 La même clé sert à trois choses, chacune à environ 1 centime :
 
-- **Demander à la styliste** une tenue : elle reçoit la liste des vêtements, la météo, les styles choisis et une planche photo numérotée de toutes les pièces, pour juger les vraies couleurs et matières (environ 2 centimes) ;
+- **Demander à la styliste** une tenue : elle reçoit la liste des vêtements, la météo, les styles choisis et une planche photo numérotée de toutes les pièces, pour juger les vraies couleurs et matières (environ 2 centimes). Elle reçoit aussi tes tenues réellement portées, celles que tu as composées, celles que tu aimes ou refuses avec leur raison, pour s'adapter à ton goût ;
 - **Reconnaître le vêtement** : la photo détourée du vêtement est envoyée pour remplir la fiche (nom, catégorie, couleur, matière, saisons…) ; c'est automatique quand on ajoute une photo et que le nom est encore vide ;
 - **Photographier l'étiquette** : la photo de l'étiquette est envoyée pour lire la marque, la taille, la composition et l'entretien ; elle n'est pas conservée.
 

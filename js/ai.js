@@ -111,7 +111,7 @@ function describeItem(it, day, num) {
 /**
  * Demande une tenue. Renvoie {ids, title, why:[], tip}.
  */
-export async function askStylist(key, { items, ctx, weather, prefs, liked, disliked, current, loadImage }) {
+export async function askStylist(key, { items, ctx, weather, prefs, liked = [], disliked = [], lessons = [], noPieces = [], worn = [], composed = [], current, loadImage }) {
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
   let clean = items.filter((i) => !i.dirty && (ctx.occ === "maison" || !homeOnly(i)));
   // au-delà de 48 pièces, on garde celles de la saison et de l'occasion pour que la planche reste lisible
@@ -142,6 +142,7 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked, disli
     "- Si le dressing ne permet pas de respecter ces règles, choisis le meilleur compromis et dis-le franchement dans une raison.",
     "L'occasion « maison / travaux » désigne une tenue pour rester chez soi ou bricoler : confort avant tout, pièces de maison (pilou, vieux jean, sweat) bienvenues, pas besoin de manteau ni de style.",
     "Inspire-toi fortement des styles et créatrices aimés : explique en quoi la tenue leur ressemble, concrètement.",
+    "Les tenues réellement portées, composées à la main et aimées montrent le goût réel de la personne : reprends leurs associations de couleurs, de formes et de niveau d'habillé, sans les copier telles quelles. Tiens compte des raisons de refus.",
     "Donne ta réponse avec l'outil proposer_tenue : les numéros des pièces choisies, un titre de 4 à 6 mots, 2 à 4 raisons courtes et une astuce de portage (ou chaîne vide)."
   ].join("\n");
 
@@ -152,8 +153,12 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked, disli
     ctx.mood ? `Envie du jour : ${ctx.mood === "couleur" ? "de la couleur" : ctx.mood}.` : "",
     styleNames.length ? "Styles et créatrices aimés :\n" + styleNames.map((s) => `- ${s.hint}`).join("\n") : "Aucun style précisé.",
     prefs.note ? `En ses mots : « ${prefs.note} »` : "",
-    liked.length ? "Tenues déjà aimées :\n" + liked.slice(0, 6).map((l) => "- " + l).join("\n") : "",
-    disliked.length ? "Tenues refusées (à ne pas reproposer) :\n" + disliked.slice(0, 6).map((l) => "- " + l).join("\n") : "",
+    worn.length ? "Tenues réellement portées (son style réel, le meilleur indice) :\n" + worn.map((l) => "- " + l).join("\n") : "",
+    composed.length ? "Tenues composées à la main par la personne :\n" + composed.map((l) => "- " + l).join("\n") : "",
+    liked.length ? "Tenues aimées :\n" + liked.slice(0, 12).map((l) => "- " + l).join("\n") : "",
+    disliked.length ? "Tenues refusées, avec la raison quand elle est connue (à ne pas reproposer) :\n" + disliked.slice(0, 12).map((l) => "- " + l).join("\n") : "",
+    lessons.length ? "Raisons de refus qui reviennent, à corriger en priorité : " + lessons.join(", ") + "." : "",
+    noPieces.length ? "Pièces que la personne n'aime pas porter (à éviter sauf si indispensable) : " + noPieces.join(", ") + "." : "",
     current ? `L'appli proposait déjà : ${current}. Propose autre chose si tu peux faire mieux, sinon améliore-la.` : "",
     "Pièces disponibles (propres) :",
     clean.map((it, i) => describeItem(it, ctx.day, i + 1)).join("\n")
