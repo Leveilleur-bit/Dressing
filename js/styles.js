@@ -249,7 +249,7 @@ export function brandMatches(brand, profile) {
 export function styleScore(pieces, styleIds, COLORS) {
   const profiles = STYLES.filter((s) => styleIds.includes(s.id));
   if (!profiles.length) return { score: 0, reasons: [] };
-  let total = 0; const reasons = [];
+  let total = 0; const reasons = []; const touch = []; let touchColor = "";
   for (const p of profiles) {
     let s = 0;
     const own = pieces.filter((it) => brandMatches(it.brand, p));
@@ -268,7 +268,7 @@ export function styleScore(pieces, styleIds, COLORS) {
     const accents = new Set(pieces.map((it) => it.color).filter((c) => COLORS[c] && !COLORS[c][2]));
     if (accents.size > p.maxAccents) s -= 1.5 * (accents.size - p.maxAccents);
     if (p.colors.accent && pieces.some((it) => p.colors.accent.includes(it.color)) && accents.size === 1) {
-      s += 1; reasons.push(`Touche de ${COLORS[[...accents][0]][0].toLowerCase()}, très ${p.name}.`);
+      s += 1; touch.push(p.name); touchColor = COLORS[[...accents][0]][0].toLowerCase();
     }
     if (!p.motifs && pieces.some((it) => it.pattern === "motif")) s -= 1.5;
     for (const c of p.combos) {
@@ -282,5 +282,6 @@ export function styleScore(pieces, styleIds, COLORS) {
     }
     total += s;
   }
+  if (touch.length) reasons.unshift(`Touche de ${touchColor}, très ${touch.length > 1 ? touch.slice(0, -1).join(", ") + " et " + touch[touch.length - 1] : touch[0]}.`);
   return { score: total / profiles.length * 1.3, reasons: reasons.slice(0, 2) };
 }

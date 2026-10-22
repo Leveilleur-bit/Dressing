@@ -37,12 +37,20 @@ async function call(key, body) {
  * exactement la réponse attendue. Plus de JSON tronqué ou entouré de texte.
  */
 async function structured(key, { system, content, name, description, schema, maxTokens = 1500 }) {
-  const j = await call(key, {
-    model: AI_MODEL, max_tokens: maxTokens, system,
+  // ce modèle ne permet pas d'imposer l'outil : on le propose avec une consigne ferme, et on garde un secours en texte
+  const body = {
+    model: AI_MODEL, max_tokens: Math.max(maxTokens, 4000),
+    system: system + "\nTu réponds UNIQUEMENT en appelant l'outil " + name + ", sans texte avant ni après.",
     tools: [{ name, description, input_schema: schema }],
-    tool_choice: { type: "tool", name },
+    tool_choice: { type: "auto" },
     messages: [{ role: "user", content }]
-  });
+  };
+  let j = await call(key, body);
+  const got = (r) => (r.content || []).find((b) => b.type === "tool_use" && b.name === name);
+  if (!got(j) && !(j.content || []).some((b) => b.type === "text" && /\{[\s\S]*\}/.test(b.text))) {
+    // une seconde chance, en rappelant la consigne
+    j = await call(key, { ...body, messages: [...body.messages, { role: "assistant", content: j.content && j.content.length ? j.content : [{ type: "text", text: "…" }] }, { role: "user", content: "Appelle maintenant l'outil " + name + " avec ta réponse." }] });
+  }
   const use = (j.content || []).find((b) => b.type === "tool_use" && b.name === name);
   if (use && use.input && typeof use.input === "object") return use.input;
   // secours : un JSON dans le texte

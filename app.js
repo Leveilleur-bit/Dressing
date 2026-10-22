@@ -11,7 +11,7 @@ import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromCom
 import { detectColor } from "./js/colorid.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.7.1";
+const VERSION = "1.7.2";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
