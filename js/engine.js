@@ -27,6 +27,10 @@ export function daysBetween(fromIso, toDay) {
   return Math.round((b - a) / 864e5);
 }
 
+const knitWords = /cardigan|gilet|pull|maille|tricot/i;
+export const isKnit = (p) => p.material === "maille" || knitWords.test(p.name || "");
+const isOpenKnit = (p) => /cardigan|gilet/i.test(p.name || "");
+
 export const comboKey = (pieces) => pieces.map((p) => p.id).sort().join("|");
 
 /**
@@ -141,6 +145,20 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
     if (accents.size === 1) s += ctx.mood === "couleur" ? 3 : 1;
     if (accents.size === 0 && ctx.mood === "couleur") s -= 2.5;
     if (accents.size > 1) s -= 2.5 * (accents.size - 1);
+
+    // harmonie : 3 couleurs au plus (neutres compris), et quelques mariages à éviter
+    const cols = new Set(pieces.filter((p) => p.cat !== "accessoire").map((p) => p.color));
+    if (cols.size > 3) s -= 3.5 * (cols.size - 3);
+    if (cols.has("noir") && cols.has("marron")) s -= 1.5;
+    if (cols.has("noir") && cols.has("marine")) s -= 1;
+    if (accents.size > 1) s -= 1.5 * (accents.size - 1); // en plus de la pénalité ci-dessus
+
+    // deux mailles ouvertes l'une sur l'autre, ou un gilet comme protection contre la pluie
+    const jk = pieces.find((p) => p.cat === "veste");
+    if (jk && isKnit(jk)) {
+      if (pieces.some((p) => p.cat === "haut" && isOpenKnit(p))) s -= 5;
+      if ((w.rain || w.snow) && jk.rain !== "impermeable") s -= 4;
+    }
 
     // motifs : un seul à la fois
     const motifs = pieces.filter((p) => p.pattern === "motif").length;
@@ -257,6 +275,7 @@ function explain(c, ctx, info) {
   if (home) { /* pas de commentaire météo */ }
   else if (jacket && info.layered) out.push(`Gros écart dans la journée (${Math.round(w.morning)}° ressentis le matin, ${Math.round(w.afternoon)}° l'après-midi) : ${jacket.name.toLowerCase()} à enlever en route.`);
   else if (jacket && (w.rain || w.snow) && jacket.rain === "impermeable") out.push(`${jacket.name} : il protège de la ${w.snow ? "neige" : "pluie"}.`);
+  else if (jacket && (w.rain || w.snow) && isKnit(jacket)) out.push(`Attention, ${w.snow ? "neige" : "pluie"} annoncée : ${jacket.name.toLowerCase()} ne protège pas, prends un parapluie ou ajoute un manteau à ton dressing.`);
   else if (jacket && (w.rain || w.snow)) out.push(`Une veste pour la ${w.snow ? "neige" : "pluie"}.`);
   else if (jacket && info.needJacket) out.push(`Une couche en plus pour ${Math.round(w.morning)}° ressentis le matin.`);
   if (w.wind >= 40) out.push(`Vent fort annoncé (${Math.round(w.wind)} km/h).`);

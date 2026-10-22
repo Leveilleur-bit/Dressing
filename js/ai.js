@@ -111,9 +111,16 @@ function describeItem(it, day, num) {
 /**
  * Demande une tenue. Renvoie {ids, title, why:[], tip}.
  */
-export async function askStylist(key, { items, ctx, weather, prefs, liked, disliked, current }) {
+export async function askStylist(key, { items, ctx, weather, prefs, liked, disliked, current, loadImage }) {
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
-  const clean = items.filter((i) => !i.dirty && (ctx.occ === "maison" || !homeOnly(i)));
+  let clean = items.filter((i) => !i.dirty && (ctx.occ === "maison" || !homeOnly(i)));
+  // au-delà de 48 pièces, on garde celles de la saison et de l'occasion pour que la planche reste lisible
+  if (clean.length > 48) {
+    const fit = (i) => (!(i.seasons || []).length || i.seasons.includes(ctx.season)) && (!(i.occ || []).length || i.occ.includes(ctx.occ));
+    clean = clean.filter(fit).concat(clean.filter((i) => !fit(i))).slice(0, 48);
+  }
+  let sheet = null;
+  if (loadImage) { try { sheet = await contactSheet(clean, loadImage); } catch (e) { sheet = null; } }
   const styleNames = STYLES.filter((s) => (prefs.styles || []).includes(s.id));
   const w = ctx.w;
   const weatherText = weather
@@ -126,6 +133,13 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked, disli
     "Une tenue = un haut et un bas, ou une robe ; des chaussures s'il y en a ; une veste ou un manteau si la météo le demande. Tu peux superposer deux hauts (ex. chemise sous un pull).",
     "Ajoute un à trois accessoires listés (sac, écharpe, bonnet, ceinture, bijou…) quand ils complètent bien la tenue ou que le froid les demande.",
     "Respecte la météo, l'occasion, la saison et évite les pièces portées ces derniers jours.",
+    "RÈGLES D'HARMONIE, à respecter strictement :",
+    "- 3 couleurs au maximum dans toute la tenue, neutres compris (noir, blanc, gris, beige, marine, marron, denim…), dont UNE seule couleur vive.",
+    "- Les chaussures et le sac s'accordent avec le reste : pas une nouvelle couleur juste pour eux.",
+    "- Pas de noir avec du marron ni du marine, sauf si c'est clairement voulu et élégant.",
+    "- Un seul gilet ou cardigan : jamais deux mailles ouvertes l'une sur l'autre.",
+    "- S'il pleut, la couche extérieure doit protéger (manteau, trench, imperméable, parka), pas un gilet en maille.",
+    "- Si le dressing ne permet pas de respecter ces règles, choisis le meilleur compromis et dis-le franchement dans une raison.",
     "L'occasion « maison / travaux » désigne une tenue pour rester chez soi ou bricoler : confort avant tout, pièces de maison (pilou, vieux jean, sweat) bienvenues, pas besoin de manteau ni de style.",
     "Inspire-toi fortement des styles et créatrices aimés : explique en quoi la tenue leur ressemble, concrètement.",
     "Donne ta réponse avec l'outil proposer_tenue : les numéros des pièces choisies, un titre de 4 à 6 mots, 2 à 4 raisons courtes et une astuce de portage (ou chaîne vide)."
@@ -145,8 +159,12 @@ export async function askStylist(key, { items, ctx, weather, prefs, liked, disli
     clean.map((it, i) => describeItem(it, ctx.day, i + 1)).join("\n")
   ].filter(Boolean).join("\n\n");
 
+  const content = sheet
+    ? [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: sheet } },
+       { type: "text", text: "Voici la planche photo de toutes les pièces disponibles : chaque photo porte le numéro de la pièce. Fie-toi aux photos pour les vraies couleurs, matières et formes ; la description écrite peut être imprécise.\n\n" + user }]
+    : user;
   const out = await structured(key, {
-    system, content: user, name: "proposer_tenue", description: "Propose une tenue composée de pièces du dressing.",
+    system, content, name: "proposer_tenue", description: "Propose une tenue composée de pièces du dressing.",
     schema: { type: "object", required: ["pieces", "titre", "pourquoi"], properties: {
       pieces: { type: "array", items: { type: "integer" }, description: "numéros des pièces choisies (entre crochets dans la liste)" },
       titre: S.str, pourquoi: { ...S.strList, maxItems: 5 }, conseil: S.str } }
@@ -308,4 +326,44 @@ export async function detectMany(key, blob) {
     const box = b && b[2] > b[0] && b[3] > b[1] ? b : null;
     return { ...normalizeItem(p), box };
   }).filter((x) => x.name || x.cat);
+}
+
+/** Planche contact : toutes les pièces en vignettes numérotées, sur une seule image. */
+async function contactSheet(items, loadImage) {
+  const n = items.length; if (!n) return null;
+  const cols = n <= 12 ? 4 : n <= 30 ? 5 : 6;
+  const cell = 230, pad = 8, rows = Math.ceil(n / cols);
+  const c = document.createElement("canvas");
+  c.width = cols * cell; c.height = rows * cell;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, c.width, c.height);
+  const blobs = await Promise.all(items.map((it) => loadImage(it).catch(() => null)));
+  for (let i = 0; i < n; i++) {
+    const it = items[i], x = (i % cols) * cell, y = Math.floor(i / cols) * cell;
+    ctx.strokeStyle = "#dddddd"; ctx.strokeRect(x + 0.5, y + 0.5, cell - 1, cell - 1);
+    let drawn = false;
+    if (blobs[i]) {
+      try {
+        const bmp = await createImageBitmap(blobs[i]);
+        const r = Math.min((cell - 2 * pad) / bmp.width, (cell - 2 * pad - 22) / bmp.height);
+        const w = bmp.width * r, h = bmp.height * r;
+        ctx.drawImage(bmp, x + (cell - w) / 2, y + pad + (cell - 2 * pad - 22 - h) / 2, w, h);
+        drawn = true;
+      } catch (e) {}
+    }
+    if (!drawn) {
+      // pas de photo : une pastille de la couleur indiquée
+      ctx.fillStyle = (COLORS[it.color] || COLORS.gris)[1];
+      ctx.fillRect(x + cell / 2 - 50, y + 50, 100, 100);
+      ctx.strokeStyle = "#999"; ctx.strokeRect(x + cell / 2 - 50.5, y + 49.5, 101, 101);
+    }
+    ctx.fillStyle = "#222"; ctx.font = "15px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(it.name.length > 26 ? it.name.slice(0, 25) + "…" : it.name, x + cell / 2, y + cell - 10);
+    ctx.textAlign = "left";
+    // numéro bien visible
+    ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(x + 22, y + 22, 18, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = "bold 18px sans-serif"; ctx.textAlign = "center"; ctx.fillText(String(i + 1), x + 22, y + 28); ctx.textAlign = "left";
+  }
+  const out = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.8));
+  return toJpegB64(out, 1568);
 }

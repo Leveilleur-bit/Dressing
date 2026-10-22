@@ -76,7 +76,7 @@ Sur un appareil partagé, on peut ajouter les deux profils et passer de l'un à 
 
 La même clé sert à trois choses, chacune à environ 1 centime :
 
-- **Demander à la styliste** une tenue : elle reçoit la liste écrite des vêtements, la météo et les styles choisis, sans photo ;
+- **Demander à la styliste** une tenue : elle reçoit la liste des vêtements, la météo, les styles choisis et une planche photo numérotée de toutes les pièces, pour juger les vraies couleurs et matières (environ 2 centimes) ;
 - **Reconnaître le vêtement** : la photo détourée du vêtement est envoyée pour remplir la fiche (nom, catégorie, couleur, matière, saisons…) ; c'est automatique quand on ajoute une photo et que le nom est encore vide ;
 - **Photographier l'étiquette** : la photo de l'étiquette est envoyée pour lire la marque, la taille, la composition et l'entretien ; elle n'est pas conservée.
 

@@ -11,7 +11,7 @@ import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromCom
 import { detectColor } from "./js/colorid.js";
 import { removeBackground } from "./js/cutout.js";
 
-const VERSION = "1.7.2";
+const VERSION = "1.8.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -332,6 +332,8 @@ function newSuggestion(reset) {
 // La tenue proposée est enregistrée : elle reste la même quand on ferme et rouvre l'appli,
 // et sur tous les appareils, jusqu'à ce qu'on demande « Autre idée » ou qu'on change d'occasion.
 const honored = new Set();
+// la tenue retenue tient tant que la météo reste du même genre (pluie ou non, froid / doux / chaud)
+const wsig = (c) => (c.w.rain || c.w.snow ? "pluie" : "sec") + "/" + (c.w.morning < 9 ? "froid" : c.w.morning < 19 ? "doux" : "chaud");
 /** Tenue incomplète alors que le dressing permettrait mieux (ex. choisie quand il n'y avait qu'un pull). */
 function incomplete(pieces, c) {
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
@@ -356,7 +358,7 @@ function restoreFor(c) {
     }
   }
   // 2. la tenue proposée plus tôt pour ce jour, si l'occasion et l'envie n'ont pas changé
-  if (p && !p.deleted && p.occ === c.occ && (p.mood || "") === (c.mood || "")) {
+  if (p && !p.deleted && p.occ === c.occ && (p.mood || "") === (c.mood || "") && (!p.wsig || p.wsig === wsig(c))) {
     const ps = usable(p.ids, false);
     if (ps && !incomplete(ps, c)) return { key: comboKey(ps.filter((x) => x.cat !== "accessoire")), pieces: ps, reasons: p.reasons || [], tip: p.tip || "", title: p.title || "", ai: !!p.ai, week: !!p.week };
   }
@@ -365,7 +367,7 @@ function restoreFor(c) {
 function savePick(c) {
   if (!current) return;
   if (sync && !sync.loaded) return; // on attend d'avoir les données à jour avant d'écrire
-  const pick = { ids: current.pieces.map((p) => p.id), occ: c.occ, mood: c.mood || "", reasons: current.reasons || [], tip: current.tip || "", title: current.title || "", ai: !!current.ai, week: !!current.week, t: Date.now() };
+  const pick = { ids: current.pieces.map((p) => p.id), occ: c.occ, mood: c.mood || "", wsig: wsig(c), reasons: current.reasons || [], tip: current.tip || "", title: current.title || "", ai: !!current.ai, week: !!current.week, t: Date.now() };
   const limit = addDays(dayStr(0), -7);
   mutate((d) => {
     d.picks = d.picks || {};
@@ -418,7 +420,12 @@ async function askAi() {
   const liked = Object.keys(fb).filter((k) => fb[k].v === 1).map(names).filter(Boolean);
   const disliked = Object.keys(fb).filter((k) => fb[k].v === -1).map(names).filter(Boolean);
   try {
-    const r = await askStylist(key, { items, ctx: c, weather: weather[dayOffset], prefs: prefs(), liked, disliked, current: current.pieces.map((p) => p.name).join(" + ") });
+    const loadImage = (it) => {
+      const path = it.cut || it.photo;
+      if (!path || !sync) return Promise.resolve(null);
+      return sync.photoUrl(path).then((u) => fetch(u)).then((r) => r.blob());
+    };
+    const r = await askStylist(key, { items, ctx: c, weather: weather[dayOffset], prefs: prefs(), liked, disliked, current: current.pieces.map((p) => p.name).join(" + "), loadImage });
     const pieces = r.ids.map((id) => byId.get(id));
     current = { key: comboKey(pieces), pieces, reasons: r.why, tip: r.tip, title: r.title, ai: true };
     seen.push(current.key);
