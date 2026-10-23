@@ -156,7 +156,7 @@ async function removeBackgroundAI(blob, { max = 760 } = {}) {
   const small = await shrink(blob, 1280);
   const out = await lib.removeBackground(small, {
     publicPath, model: "small", output: { format: "image/png" },
-    progress: (key, cur, total) => { if (progressFn && /model|wasm/.test(key) && total) progressFn(Math.round((cur / total) * 100)); }
+    progress: (key, cur, total) => { if (progressFn && /models/.test(key) && total) progressFn(Math.round((cur / total) * 100)); }
   });
   aiReady = true;
   // recadrage au plus près du vêtement + taille finale

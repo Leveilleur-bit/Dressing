@@ -11,7 +11,7 @@ import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromCom
 import { detectColor } from "./js/colorid.js";
 import { removeBackground, onCutProgress } from "./js/cutout.js";
 
-const VERSION = "1.12.0";
+const VERSION = "1.12.1";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -1013,7 +1013,7 @@ function migrateCoats() {
 // ---------------- DÉTOURAGE ----------------
 const cutMode = () => { try { return localStorage.getItem("dressing:cut") === "simple" ? "simple" : "precis"; } catch (e) { return "precis"; } };
 let cutStatusEl = null; // où afficher la progression du premier téléchargement du modèle
-onCutProgress((pct) => { if (cutStatusEl && pct < 100) cutStatusEl.textContent = "Préparation du détourage précis (une seule fois) : " + pct + " %"; });
+onCutProgress((pct) => { if (cutStatusEl && pct < 100) cutStatusEl.textContent = "Téléchargement du modèle de détourage, une seule fois (" + Math.round(pct * 0.44) + "\u00a0Mo sur 44) : " + pct + "\u00a0%"; });
 function renderCutChips() {
   const m = cutMode();
   $("cut-chips").innerHTML = [["precis", "Précis (IA sur le téléphone)"], ["simple", "Simple (fond uni)"]].map(([k, l]) => '<button type="button" class="chip" data-cut="' + k + '" aria-pressed="' + (m === k) + '">' + l + "</button>").join("");
