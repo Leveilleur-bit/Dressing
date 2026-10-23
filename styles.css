@@ -358,3 +358,29 @@ button.fl-item:focus-visible { outline: 2px solid var(--accent, #2b3fd1); outlin
 .alt-img img { max-width: 92%; max-height: 92%; object-fit: contain; }
 .alt-img svg { width: 80%; height: 80%; }
 .alt-name { font-size: .8rem; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* les 3 propositions */
+#props-sheet { display: grid; gap: 14px; }
+.prop { border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 10px; background: var(--surface); }
+.prop-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.prop .flatlay { max-width: 320px; margin: 0 auto; }
+.prop-pieces { margin: 0; font-size: .85rem; color: var(--muted); }
+.prop .why { margin: 0; }
+#btn-props { justify-self: center; margin: 2px auto 0; display: block; }
+#btn-props[hidden] { display: none; }
+
+/* bilan du dressing */
+#audit-sheet { display: grid; gap: 12px; }
+.audit-sec { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
+.audit-sec h3 { margin: 0; font-size: 1.05rem; }
+.audit-sec .hint { margin: 0; }
+.audit-summary { margin: 0; line-height: 1.45; }
+.audit-row { display: grid; grid-template-columns: 84px 1fr; gap: 10px; align-items: start; }
+.audit-row p { margin: 0; font-size: .9rem; line-height: 1.4; }
+.audit-idea { color: var(--muted); margin-top: 4px !important; }
+.audit-piece { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; color: inherit; font: inherit; text-align: left; min-width: 0; width: 84px; }
+.audit-piece .alt-name { font-size: .72rem; }
+.audit-dupe { display: grid; gap: 6px; }
+.audit-dupe p { margin: 0; font-size: .9rem; }
+.audit-dupe-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.audit-buys { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: .92rem; line-height: 1.4; }

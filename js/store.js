@@ -49,6 +49,8 @@ export function merge(local, remote) {
     picks: mergeMap(remote.picks, local.picks),
     outfits: mergeMap(remote.outfits, local.outfits),
     looks: mergeMap(remote.looks, local.looks),
+    aiChoices: [...new Map([...(remote.aiChoices || []), ...(local.aiChoices || [])].map((x) => [x.t + x.key, x])).values()].sort((a, b) => a.t - b.t).slice(-30),
+    audit: ((local.audit && local.audit.t) || 0) > ((remote.audit && remote.audit.t) || 0) ? local.audit : remote.audit || null,
     week: ((local.week && local.week.t) || 0) > ((remote.week && remote.week.t) || 0) ? local.week : remote.week || null,
     prefs: ((local.prefs && local.prefs.t) || 0) > ((remote.prefs && remote.prefs.t) || 0) ? local.prefs : remote.prefs || emptyDoc().prefs
   };

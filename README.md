@@ -22,7 +22,8 @@ Et aussi :
 - la **recherche** dans le dressing, et le filtre **À trier** (pièces pas portées depuis 6 mois) ;
 - l'**occasion par défaut** en semaine et le week-end, réglable pour chaque personne ;
 - la **valise** : destination, dates, météo sur place, une tenue par jour qui réutilise les mêmes pièces, et la liste à cocher.
-- le **détourage automatique** des photos : pose le vêtement à plat sur un drap ou un sol uni et contrasté, l'appli enlève le fond ;
+- le **détourage automatique** des photos, par un petit modèle d'IA qui tourne sur le téléphone (gratuit, rien n'est envoyé, environ 55 Mo téléchargés une seule fois) ; une méthode simple reste disponible dans Réglages, ainsi qu'un bouton pour refaire le détourage de toutes les photos ;
+- les catégories **Veste** et **Manteau** : un manteau quand il fait froid, une veste quand c'est doux, jamais les deux ;
 - **Que porter avec… ?** : depuis la fiche d'une pièce, 4 tenues construites autour d'elle ;
 - **Mes tenues** : les tenues que tu composes toi-même, celles que tu aimes et celles que tu gardes, à porter en un geste ;
 - **les pièces qui manquent** : les pièces de base qui ajouteraient le plus de tenues, et la progression du dressing par paliers ;
@@ -77,10 +78,11 @@ Sur un appareil partagé, on peut ajouter les deux profils et passer de l'un à 
 
 La même clé sert à trois choses, chacune à environ 1 centime :
 
-- **Demander à la styliste** une tenue : elle reçoit la liste des vêtements, la météo, les styles choisis et une planche photo numérotée de toutes les pièces, pour juger les vraies couleurs et matières (environ 2 centimes). Elle reçoit aussi tes tenues réellement portées, celles que tu as composées, celles que tu aimes ou refuses avec leur raison, pour s'adapter à ton goût ;
+- **Demander à la styliste** : 3 tenues au choix (la sûre, la plus osée, la redécouverte), et ton choix lui apprend ton goût ; elle reçoit la liste des vêtements, la météo, les styles choisis et une planche photo numérotée de toutes les pièces, pour juger les vraies couleurs et matières (environ 2 centimes). Elle reçoit aussi tes tenues réellement portées, celles que tu as composées, celles que tu aimes ou refuses avec leur raison, pour s'adapter à ton goût ;
 - **Reconnaître le vêtement** : la photo détourée du vêtement est envoyée pour remplir la fiche (nom, catégorie, couleur, matière, saisons…) ; c'est automatique quand on ajoute une photo et que le nom est encore vide ;
 - **Photographier l'étiquette** : la photo de l'étiquette est envoyée pour lire la marque, la taille, la composition et l'entretien ; elle n'est pas conservée.
 
+- **Bilan du dressing** (onglet Dressing) : pièces à ressortir, orphelines, doublons, pièces à questionner et achats utiles (environ 3 centimes) ;
 - **Ajouter plusieurs vêtements** (onglet Dressing) : une photo de penderie, de pile ou de lit où la styliste liste et découpe chaque pièce (environ 2 centimes la photo), ou une rafale de photos (une par pièce) traitée pendant qu'on photographie (environ 1 centime la pièce).
 
 Sans clé, la couleur et le motif sont quand même détectés sur le téléphone à partir de la photo.
@@ -99,4 +101,5 @@ Site statique sans dépendance, à servir tel quel :
 - `js/github.js` : l'API GitHub « contents » ;
 - `js/weather.js` : la météo [Open-Meteo](https://open-meteo.com) (gratuite, sans clé) ;
 - `js/camera.js` : l'appareil photo intégré ;
-- `sw.js`, `manifest.webmanifest` : l'installation sur le téléphone et le fonctionnement hors connexion.
+- `sw.js`, `manifest.webmanifest` : l'installation sur le téléphone et le fonctionnement hors connexion ;
+- `js/vendor/bgremoval.js` et `bg/` : la bibliothèque [@imgly/background-removal](https://github.com/imgly/background-removal-js) 1.4.5 et son modèle ISNet, sous licence AGPL-3.0 (code source public), pour le détourage sur le téléphone.

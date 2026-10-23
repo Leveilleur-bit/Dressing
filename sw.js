@@ -1,5 +1,5 @@
 // Garde l'appli disponible hors connexion. Les données (GitHub) et la météo passent toujours par le réseau.
-const CACHE = "dressing-app-v1.11.0";
+const CACHE = "dressing-app-v1.12.0";
 const SHELL = [
   "./", "index.html", "styles.css", "app.js", "manifest.webmanifest",
   "js/catalog.js", "js/engine.js", "js/store.js", "js/github.js", "js/weather.js", "js/camera.js", "js/styles.js", "js/ai.js", "js/guess.js", "js/cutout.js", "js/gaps.js", "js/colorid.js",
@@ -24,6 +24,11 @@ self.addEventListener("fetch", (e) => {
   const fonts = url.host === "fonts.googleapis.com" || url.host === "fonts.gstatic.com";
   if (!sameOrigin && !fonts) return; // GitHub, météo : réseau direct
   if (sameOrigin && url.pathname.endsWith("version.json")) return; // toujours le réseau
+  // modèle de détourage (gros fichiers qui ne changent jamais) : cache à part, gardé d'une version à l'autre
+  if (sameOrigin && (url.pathname.includes("/bg/") || url.pathname.includes("/js/vendor/"))) {
+    e.respondWith(caches.open("dressing-model-v1").then((c) => c.match(e.request).then((hit) => hit || fetch(e.request).then((res) => { if (res.ok) c.put(e.request, res.clone()); return res; }))));
+    return;
+  }
 
   // réseau d'abord pour avoir la dernière version, cache si hors ligne
   e.respondWith(

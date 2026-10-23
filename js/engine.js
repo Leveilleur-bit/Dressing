@@ -31,6 +31,7 @@ const knitWords = /cardigan|gilet|pull|maille|tricot/i;
 export const isKnit = (p) => p.material === "maille" || knitWords.test(p.name || "");
 const isOpenKnit = (p) => /cardigan|gilet/i.test(p.name || "");
 
+export const isOuter = (p) => p.cat === "veste" || p.cat === "manteau";
 export const comboKey = (pieces) => pieces.map((p) => p.id).sort().join("|");
 
 /**
@@ -80,12 +81,12 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   const allowJacket = home ? cold < 16 : needJacket || cold < 21 || w.wind >= 35;
 
   const by = (c) => items.filter((i) => i.cat === c);
-  let tops = by("haut"), bottoms = by("bas"), dresses = by("robe"), jackets = by("veste"), shoes = by("chaussures");
+  let tops = by("haut"), bottoms = by("bas"), dresses = by("robe"), jackets = items.filter(isOuter), shoes = by("chaussures");
   if (must) {
     if (must.cat === "haut") { tops = [must]; dresses = []; }
     if (must.cat === "bas") { bottoms = [must]; dresses = []; }
     if (must.cat === "robe") { dresses = [must]; tops = []; bottoms = []; }
-    if (must.cat === "veste") jackets = [must];
+    if (isOuter(must)) jackets = [must];
     if (must.cat === "chaussures") shoes = [must];
   }
 
@@ -100,7 +101,11 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   const itemScore = (it) => {
     let s = 0;
     const wm = it.warmth || 2;
-    if (it.cat === "veste") s -= 1.2 * Math.abs(wm - warmthFor(cold));
+    if (isOuter(it)) {
+      s -= 1.2 * Math.abs(wm - warmthFor(cold));
+      // un manteau quand il fait vraiment froid, une veste quand c'est doux
+      if (it.cat === "manteau") s += cold < 8 ? 1.5 : cold > 14 ? -2 : 0;
+    }
     else if (it.cat === "chaussures") {
       if (w.rain || w.snow || cold < 6) s += wm >= 2 ? 1 : -2;
       else if (warm > 24) s += wm <= 2 ? 1 : -2;
@@ -115,7 +120,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
     // pluie
     if (w.rain || w.snow) {
       if (it.rain === "fragile") s -= 5;
-      if (it.rain === "impermeable" && (it.cat === "veste" || it.cat === "chaussures")) s += 2.5;
+      if (it.rain === "impermeable" && (isOuter(it) || it.cat === "chaussures")) s += 2.5;
     }
 
     // humeur / importance
@@ -131,7 +136,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
     }
     // valise : réutiliser ce qui est déjà dans la valise, éviter de remettre la même chose deux jours de suite
     // (un bas ou une veste se remettent facilement, un haut beaucoup moins)
-    if (opts.packed && opts.packed.has(it.id)) s += { chaussures: 4, veste: 4, bas: 3, haut: 1.5, robe: 1.5 }[it.cat] || 2;
+    if (opts.packed && opts.packed.has(it.id)) s += { chaussures: 4, veste: 4, manteau: 4, bas: 3, haut: 1.5, robe: 1.5 }[it.cat] || 2;
     if (opts.prev && opts.prev.has(it.id)) s -= { haut: 6, robe: 6, bas: 2 }[it.cat] || 0;
     return s;
   };
@@ -146,7 +151,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
     if (evals) pieces = evals[i].slice();
     else {
       pieces = pick(bases).slice();
-      if (jackets.length && ((must && must.cat === "veste") || (allowJacket && (needJacket || Math.random() < 0.4)))) pieces.unshift(pick(jackets));
+      if (jackets.length && ((must && isOuter(must)) || (allowJacket && (needJacket || Math.random() < 0.4)))) pieces.unshift(pick(jackets));
       if (shoes.length) pieces.push(pick(shoes));
     }
     const key = comboKey(pieces);
@@ -172,7 +177,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
     for (const p of pieces) if (pieceNo.has(p.id)) s -= 2.5 * Math.min(3, pieceNo.get(p.id));
 
     // deux mailles ouvertes l'une sur l'autre, ou un gilet comme protection contre la pluie
-    const jk = pieces.find((p) => p.cat === "veste");
+    const jk = pieces.find(isOuter);
     if (jk && isKnit(jk)) {
       if (pieces.some((p) => p.cat === "haut" && isOpenKnit(p))) s -= 5;
       if ((w.rain || w.snow) && jk.rain !== "impermeable") s -= 4;
@@ -183,7 +188,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
     if (motifs > 1) s -= 4 * (motifs - 1);
 
     // couches
-    const hasJacket = pieces.some((p) => p.cat === "veste");
+    const hasJacket = pieces.some(isOuter);
     if (needJacket && !hasJacket) s -= 4;
     if (w.wind >= 40 && pieces.some((p) => p.cat === "robe" && (p.warmth || 2) === 1)) s -= 2;
     if (pieces.some((p) => p.cat === "robe") && cold < 5) s -= 1.5;
@@ -290,12 +295,12 @@ function explain(c, ctx, info) {
   const home = ctx.occ === "maison";
   const w = home ? { ...ctx.w, rain: false, snow: false, wind: 0 } : ctx.w;
   if (home) out.push("Tenue pour rester à la maison ou bricoler : on privilégie le confort.");
-  const jacket = c.pieces.find((p) => p.cat === "veste");
+  const jacket = c.pieces.find(isOuter);
   if (home) { /* pas de commentaire météo */ }
   else if (jacket && info.layered) out.push(`Gros écart dans la journée (${Math.round(w.morning)}° ressentis le matin, ${Math.round(w.afternoon)}° l'après-midi) : ${jacket.name.toLowerCase()} à enlever en route.`);
   else if (jacket && (w.rain || w.snow) && jacket.rain === "impermeable") out.push(`${jacket.name} : il protège de la ${w.snow ? "neige" : "pluie"}.`);
   else if (jacket && (w.rain || w.snow) && isKnit(jacket)) out.push(`Attention, ${w.snow ? "neige" : "pluie"} annoncée : ${jacket.name.toLowerCase()} ne protège pas, prends un parapluie ou ajoute un manteau à ton dressing.`);
-  else if (jacket && (w.rain || w.snow)) out.push(`Une veste pour la ${w.snow ? "neige" : "pluie"}.`);
+  else if (jacket && (w.rain || w.snow)) out.push(`${jacket.cat === "manteau" ? "Un manteau" : "Une veste"} pour la ${w.snow ? "neige" : "pluie"}.`);
   else if (jacket && info.needJacket) out.push(`Une couche en plus pour ${Math.round(w.morning)}° ressentis le matin.`);
   if (w.wind >= 40) out.push(`Vent fort annoncé (${Math.round(w.wind)} km/h).`);
 
@@ -337,7 +342,7 @@ export function missingNote(items, ctx) {
   if (!has("robe") && !has("haut")) miss.push("un haut");
   if (!has("robe") && !has("bas")) miss.push("un bas");
   if (!has("chaussures")) miss.push("des chaussures");
-  if (ctx.occ !== "maison" && (ctx.w.morning < 15 || ctx.w.rain) && !has("veste")) miss.push("une veste");
+  if (ctx.occ !== "maison" && (ctx.w.morning < 15 || ctx.w.rain) && !has("veste") && !has("manteau")) miss.push(ctx.w.morning < 8 ? "un manteau" : "une veste");
   if (!miss.length) return "";
   return "Ajoute " + miss.join(", ") + " pour compléter les tenues" + (items.some((i) => i.dirty && !i.deleted) ? " (les pièces au sale sont mises de côté)." : ".");
 }

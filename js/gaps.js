@@ -27,8 +27,8 @@ const CANDIDATES = [
   { label: "des bottines noires", cat: "chaussures", color: "noir", seasons: WARM, occ: DAY.concat("soiree") },
   { label: "des mocassins marron", cat: "chaussures", color: "marron", seasons: MID, occ: DAY },
   { label: "des sandales", cat: "chaussures", color: "camel", seasons: LIGHT, occ: ["quotidien", "soiree"] },
-  { label: "un trench beige", cat: "veste", color: "beige", seasons: ["printemps", "automne"], occ: DAY, rain: "impermeable" },
-  { label: "un manteau camel", cat: "veste", color: "camel", seasons: WARM, occ: DAY.concat("soiree") },
+  { label: "un trench beige", cat: "manteau", color: "beige", seasons: ["printemps", "automne"], occ: DAY, rain: "impermeable" },
+  { label: "un manteau camel", cat: "manteau", color: "camel", seasons: WARM, occ: DAY.concat("soiree") },
   { label: "un blazer marine", cat: "veste", color: "marine", seasons: MID, occ: DAY.concat("soiree") }
 ];
 
@@ -70,12 +70,12 @@ export function suggestGaps(items, max = 3) {
     if (owned(c)) continue;
     const fake = { id: "gap", name: c.label, cat: c.cat, color: c.color, pattern: c.pattern || "uni", seasons: c.seasons, occ: c.occ };
     let gain;
-    if (c.cat === "veste") {
+    if (c.cat === "veste" || c.cat === "manteau") {
       // une veste ne crée pas de tenue, elle en couvre : on compte les tenues qu'elle accompagne bien
       const tops = live.filter((i) => i.cat === "haut"), bottoms = live.filter((i) => i.cat === "bas");
       gain = 0;
       for (const t of tops) for (const b of bottoms) if (compatible([t, b, fake])) gain++;
-      const jackets = live.filter((i) => i.cat === "veste").length;
+      const jackets = live.filter((i) => i.cat === c.cat).length;
       gain = Math.round(gain / (jackets + 1)); // moins utile si on a déjà des vestes
     } else gain = countOutfits(live.concat(fake)) - base;
     if (gain > 0) res.push({ ...c, gain });

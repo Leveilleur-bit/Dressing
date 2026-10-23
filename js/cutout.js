@@ -17,7 +17,7 @@ function loadBitmap(blob) {
  * @returns {Promise<{blob: Blob|null, ok: boolean, coverage: number}>}
  *  ok = false quand le résultat n'est pas crédible (fond trop chargé, vêtement coupé…)
  */
-export async function removeBackground(blob, { max = 760, strength = 1 } = {}) {
+export async function removeBackgroundBasic(blob, { max = 760, strength = 1, maskOnly = false } = {}) {
   const bmp = await loadBitmap(blob);
   const r = Math.min(1, max / Math.max(bmp.width, bmp.height));
   const W = Math.round(bmp.width * r), H = Math.round(bmp.height * r);
@@ -114,6 +114,7 @@ export async function removeBackground(blob, { max = 760, strength = 1 } = {}) {
   const touches = (minX <= 1) + (minY <= 1) + (maxX >= W - 2) + (maxY >= H - 2);
   const ok = coverage > 0.04 && coverage < 0.9 && touches < 3;
   if (!ok) return { blob: null, ok: false, coverage };
+  if (maskOnly) return { ok: true, mask: alpha, W, H, coverage };
 
   // 4. contour adouci (flou 3×3 du masque)
   const soft = new Uint8Array(N);
@@ -138,4 +139,117 @@ export async function removeBackground(blob, { max = 760, strength = 1 } = {}) {
   out.getContext("2d").drawImage(cv, cx, cy, cw, chh, 0, 0, cw, chh);
   const png = await new Promise((res) => out.toBlob(res, "image/png"));
   return { blob: png, ok: !!png, coverage };
+}
+
+// ---------------- détourage précis : petit modèle d'IA qui tourne sur le téléphone ----------------
+// Bibliothèque @imgly/background-removal 1.4.5 (licence AGPL, code source public) et modèle ISNet
+// quantifié, hébergés avec l'appli (dossier bg/). ~55 Mo téléchargés une seule fois, puis gardés en cache.
+let aiLib = null, aiBroken = false, progressFn = null, aiReady = false;
+export function onCutProgress(fn) { progressFn = fn; }
+export const cutModelReady = () => aiReady;
+
+async function removeBackgroundAI(blob, { max = 760 } = {}) {
+  if (!aiLib) aiLib = import("./vendor/bgremoval.js");
+  const lib = await aiLib;
+  const publicPath = new URL("../bg/", import.meta.url).href;
+  // on réduit d'abord la photo : plus rapide, et largement assez pour le modèle (1024 px)
+  const small = await shrink(blob, 1280);
+  const out = await lib.removeBackground(small, {
+    publicPath, model: "small", output: { format: "image/png" },
+    progress: (key, cur, total) => { if (progressFn && /model|wasm/.test(key) && total) progressFn(Math.round((cur / total) * 100)); }
+  });
+  aiReady = true;
+  // recadrage au plus près du vêtement + taille finale
+  const bmp = await loadBitmap(out);
+  const cv = document.createElement("canvas"); cv.width = bmp.width; cv.height = bmp.height;
+  const ctx = cv.getContext("2d", { willReadFrequently: true }); ctx.drawImage(bmp, 0, 0);
+  const imgData = ctx.getImageData(0, 0, cv.width, cv.height);
+  const { data } = imgData;
+  // couleurs reprises de la photo d'origine : le modèle ne sert qu'à fournir le masque
+  {
+    const ob = await loadBitmap(small);
+    if (ob.width === cv.width && ob.height === cv.height) {
+      const oc = document.createElement("canvas"); oc.width = cv.width; oc.height = cv.height;
+      const ox = oc.getContext("2d", { willReadFrequently: true }); ox.drawImage(ob, 0, 0);
+      const od = ox.getImageData(0, 0, cv.width, cv.height).data;
+      for (let i = 0; i < data.length; i += 4) { data[i] = od[i]; data[i + 1] = od[i + 1]; data[i + 2] = od[i + 2]; }
+    }
+  }
+  const Wd = cv.width, Hd = cv.height, N = Wd * Hd;
+  // 1. poussières : on ne garde que les grands morceaux opaques (et leur contour adouci)
+  {
+    const lab = new Int32Array(N), q = new Int32Array(N), sizes = [0];
+    for (let s0 = 0; s0 < N; s0++) {
+      if (lab[s0] || data[s0 * 4 + 3] < 128) continue;
+      const id = sizes.length; let h = 0, t = 0; q[t++] = s0; lab[s0] = id;
+      while (h < t) { const i = q[h++], x = i % Wd;
+        for (const n of [x > 0 ? i - 1 : -1, x < Wd - 1 ? i + 1 : -1, i >= Wd ? i - Wd : -1, i < N - Wd ? i + Wd : -1])
+          if (n >= 0 && !lab[n] && data[n * 4 + 3] >= 128) { lab[n] = id; q[t++] = n; } }
+      sizes.push(t);
+    }
+    const big = Math.max(0, ...sizes);
+    const keep = sizes.map((z) => z >= big * 0.04);
+    // un pixel semi-transparent est gardé s'il touche un morceau gardé (rayon 2)
+    for (let i = 0; i < N; i++) {
+      const a = data[i * 4 + 3]; if (!a) continue;
+      if (lab[i]) { if (!keep[lab[i]]) data[i * 4 + 3] = 0; continue; }
+      const x = i % Wd, y = (i / Wd) | 0; let near = false;
+      for (let dy = -2; dy <= 2 && !near; dy++) for (let dx = -2; dx <= 2 && !near; dx++) {
+        const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= Wd || yy >= Hd) continue;
+        const l = lab[yy * Wd + xx]; if (l && keep[l]) near = true;
+      }
+      if (!near) data[i * 4 + 3] = 0;
+    }
+  }
+  // 2. sur un fond uni, la méthode simple voit bien les zones claires (rayures blanches) que le modèle rate :
+  //    si les deux sont d'accord sur la silhouette, on les additionne
+  try {
+    const b = await removeBackgroundBasic(small, { max: Math.max(Wd, Hd), maskOnly: true });
+    if (b.ok && b.W === Wd && b.H === Hd) {
+      // accord = presque tout le vêtement vu par le modèle est aussi vu par la méthode simple,
+      // et la méthode simple ne déborde pas du cadre du vêtement vu par le modèle
+      let inter = 0, ai = 0, mk = 0, out = 0, bx0 = Wd, by0 = Hd, bx1 = -1, by1 = -1;
+      for (let i = 0; i < N; i++) if (data[i * 4 + 3] >= 128) { ai++; const x = i % Wd, y = (i / Wd) | 0; if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; }
+      const m = Math.round(Math.max(bx1 - bx0, by1 - by0) * 0.03);
+      for (let i = 0; i < N; i++) {
+        if (!b.mask[i]) continue; mk++;
+        if (data[i * 4 + 3] >= 128) inter++;
+        const x = i % Wd, y = (i / Wd) | 0;
+        if (x < bx0 - m || x > bx1 + m || y < by0 - m || y > by1 + m) out++;
+      }
+      if (ai && inter / ai > 0.9 && out < mk * 0.03) for (let i = 0; i < N; i++) if (b.mask[i]) data[i * 4 + 3] = Math.max(data[i * 4 + 3], b.mask[i]);
+    }
+  } catch (e) {}
+  ctx.putImageData(imgData, 0, 0);
+  let x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1, fg = 0;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    if (data[(y * cv.width + x) * 4 + 3] > 128) { fg++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  const coverage = fg / (cv.width * cv.height);
+  if (x1 < 0 || coverage < 0.02 || coverage > 0.97) return { blob: null, ok: false, coverage };
+  const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.03);
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(cv.width - 1, x1 + pad); y1 = Math.min(cv.height - 1, y1 + pad);
+  const w = x1 - x0 + 1, h = y1 - y0 + 1, r = Math.min(1, max / Math.max(w, h));
+  const o = document.createElement("canvas"); o.width = Math.round(w * r); o.height = Math.round(h * r);
+  o.getContext("2d").drawImage(cv, x0, y0, w, h, 0, 0, o.width, o.height);
+  const png = await new Promise((res) => o.toBlob(res, "image/png"));
+  return { blob: png, ok: !!png, coverage, precise: true };
+}
+async function shrink(blob, max) {
+  const bmp = await loadBitmap(blob);
+  const r = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  if (r === 1 && blob.type === "image/jpeg") return blob;
+  const c = document.createElement("canvas"); c.width = Math.round(bmp.width * r); c.height = Math.round(bmp.height * r);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, "image/jpeg", 0.92));
+}
+
+/** Détourage : le modèle précis si possible, sinon la méthode simple (fond uni). */
+export async function removeBackground(blob, opts = {}) {
+  const precise = opts.precise ?? (localStorage.getItem("dressing:cut") !== "simple");
+  if (precise && !aiBroken) {
+    try { return await removeBackgroundAI(blob, opts); }
+    catch (e) { console.warn("détourage précis indisponible", e); aiBroken = true; }
+  }
+  return removeBackgroundBasic(blob, opts);
 }

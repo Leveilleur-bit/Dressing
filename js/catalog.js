@@ -1,6 +1,6 @@
 export const CATS = [
   { id: "haut", label: "Haut" }, { id: "bas", label: "Bas" }, { id: "robe", label: "Robe" },
-  { id: "veste", label: "Veste" }, { id: "chaussures", label: "Chaussures" },
+  { id: "veste", label: "Veste" }, { id: "manteau", label: "Manteau" }, { id: "chaussures", label: "Chaussures" },
   { id: "accessoire", label: "Accessoire" }
 ];
 
@@ -59,6 +59,7 @@ export const GLYPH = {
   bas_jupe: "M21 8 H43 L44 13 L55 56 H9 L20 13 Z",
   bas_short: "M16 8 H48 L52 40 H35 L32 22 L29 40 H12 Z",
   veste: "M20 8 L8 16 L6 58 H27 L32 24 L37 58 H58 L56 16 L44 8 L32 24 Z",
+  manteau: "M22 4 L10 9 L4 46 L11 48 L15 26 L14 62 H30 L32 20 L34 62 H50 L49 26 L53 48 L60 46 L54 9 L42 4 L32 20 Z",
   chaussures: "M6 44 L6 30 Q12 27 18 31 Q28 40 44 40 Q58 41 58 50 V54 H6 Z",
   accessoire: "M22 24 Q22 10 32 10 Q42 10 42 24 H38 Q38 14 32 14 Q26 14 26 24 Z M12 24 H52 L56 56 H8 Z",
   acc_echarpe: "M12 10 H52 V24 Q42 31 32 31 Q22 31 12 24 Z M36 29 H47 L51 57 H40 Z",
@@ -87,8 +88,8 @@ export function demoItems() {
     { id: "d5", name: "Jean droit", cat: "bas", color: "denim", pattern: "uni", styles: ["decontracte"], material: "jean", warmth: 2, seasons: all4, occ: ["quotidien", "soiree"], lastWorn: ago(1) },
     { id: "d6", name: "Pantalon chino", cat: "bas", color: "beige", pattern: "uni", warmth: 2, seasons: all4, occ: ["travail", "quotidien"], lastWorn: ago(6) },
     { id: "d7", name: "Robe midi", cat: "robe", color: "bordeaux", pattern: "uni", warmth: 2, seasons: ["printemps", "automne"], occ: ["soiree", "travail"] },
-    { id: "d8", name: "Trench", cat: "veste", color: "beige", pattern: "uni", styles: ["classique", "chic"], material: "coton", warmth: 2, rain: "impermeable", seasons: ["printemps", "automne"], occ: ["travail", "quotidien", "soiree"], lastWorn: ago(5) },
-    { id: "d9", name: "Doudoune", cat: "veste", color: "noir", pattern: "uni", warmth: 3, seasons: ["automne", "hiver"], occ: ["quotidien", "sport"] },
+    { id: "d8", name: "Trench", cat: "manteau", color: "beige", pattern: "uni", styles: ["classique", "chic"], material: "coton", warmth: 2, rain: "impermeable", seasons: ["printemps", "automne"], occ: ["travail", "quotidien", "soiree"], lastWorn: ago(5) },
+    { id: "d9", name: "Doudoune", cat: "manteau", color: "noir", pattern: "uni", warmth: 3, seasons: ["automne", "hiver"], occ: ["quotidien", "sport"] },
     { id: "d10", name: "Baskets", cat: "chaussures", color: "blanc", pattern: "uni", warmth: 1, seasons: all4, occ: ["quotidien", "sport"], lastWorn: ago(1) },
     { id: "d11", name: "Bottines en daim", cat: "chaussures", color: "marron", pattern: "uni", warmth: 3, rain: "fragile", seasons: ["automne", "hiver"], occ: ["travail", "soiree", "quotidien"], lastWorn: ago(6) },
     { id: "d12", name: "Boots en cuir", cat: "chaussures", color: "noir", pattern: "uni", warmth: 3, rain: "impermeable", seasons: ["automne", "hiver"], occ: ["travail", "quotidien"] }

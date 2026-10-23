@@ -7,11 +7,11 @@ import { Repo, parseRepo } from "./js/github.js";
 import { fetchTwoDays, fetchRange, searchCity, locate } from "./js/weather.js";
 import { initCamera, takePhoto, takePhotos, cameraSupported, resizeFile } from "./js/camera.js";
 import { STYLES, STYLE_TAGS, MATERIALS } from "./js/styles.js";
-import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromComposition, detectMany, describeLook } from "./js/ai.js";
+import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromComposition, detectMany, describeLook, auditWardrobe } from "./js/ai.js";
 import { detectColor } from "./js/colorid.js";
-import { removeBackground } from "./js/cutout.js";
+import { removeBackground, onCutProgress } from "./js/cutout.js";
 
-const VERSION = "1.11.0";
+const VERSION = "1.12.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -132,7 +132,7 @@ function hydratePhotos(root) {
 function layoutFlat(pieces) {
   const W = 100; let H = 110;
   const by = (c) => pieces.filter((p) => p.cat === c);
-  const tops = by("haut"), dress = by("robe")[0], bottom = by("bas")[0], jackets = by("veste"), shoes = by("chaussures").slice(0, 2);
+  const tops = by("haut"), dress = by("robe")[0], bottom = by("bas")[0], jackets = pieces.filter((p) => p.cat === "manteau").concat(by("veste")), shoes = by("chaussures").slice(0, 2);
   const accs = pieces.filter((p) => p.cat === "accessoire");
   const placed = new Map(); // id -> rect {x, y, w, h}
   const L = { x: 3, w: 46 }, R = { x: 51, w: 46 };
@@ -188,7 +188,7 @@ function layoutFlat(pieces) {
 }
 function flatlay(pieces, small = false, interactive = false) {
   const { H, placed } = layoutFlat(pieces);
-  const z = { bas: 1, robe: 1, haut: 2, veste: 3, chaussures: 4, accessoire: 5 };
+  const z = { bas: 1, robe: 1, haut: 2, veste: 3, manteau: 3, chaussures: 4, accessoire: 5 };
   const html = pieces.map((p, i) => {
     const r = placed.get(p.id); if (!r) return "";
     const path = p.cut || p.photo;
@@ -198,6 +198,83 @@ function flatlay(pieces, small = false, interactive = false) {
     return "<" + tag + (interactive ? ' type="button" data-pid="' + esc(p.id) + '" aria-label="' + esc(p.name) + '"' : "") + ' class="fl-item ' + kind + '" style="left:' + r.x + "%;top:" + (r.y / H * 100).toFixed(2) + "%;width:" + r.w + "%;height:" + (r.h / H * 100).toFixed(2) + "%;z-index:" + (z[p.cat] || 2) + ";animation-delay:" + i * 0.05 + 's"' + data + ' title="' + esc(p.name) + '">' + glyph(p.cat, p.color, p.acc, p.name) + "</" + tag + ">";
   }).join("");
   return '<div class="flatlay' + (small ? " small" : "") + '" style="aspect-ratio:100 / ' + Math.round(H) + '">' + html + "</div>";
+}
+
+// ---------------- LES 3 PROPOSITIONS DE LA STYLISTE ----------------
+let proposals = null; // {day, list: [{angle, title, why, tip, pieces}]}
+function openProposals() {
+  if (!proposals || !proposals.list.length) return;
+  $("props-sheet").innerHTML = '<div class="sheet-head"><div><span class="label">La styliste propose</span><h2>' + proposals.list.length + ' idées pour ' + (proposals.day === dayStr(0) ? "aujourd'hui" : "demain") + '</h2></div><button class="x" type="button" data-pr="close" aria-label="Fermer">✕</button></div>' +
+    '<p class="hint">Choisis celle qui te plaît : ton choix lui apprend ton goût.</p>' +
+    proposals.list.map((o, i) => '<article class="prop">' +
+      '<div class="prop-head"><span class="tag">' + esc(o.angle) + '</span><strong>' + esc(o.title) + "</strong></div>" +
+      flatlay(o.pieces.slice().sort((a, b) => ({ manteau: 0, veste: 0, haut: 1, robe: 1, bas: 2, chaussures: 3 }[a.cat] ?? 4) - ({ manteau: 0, veste: 0, haut: 1, robe: 1, bas: 2, chaussures: 3 }[b.cat] ?? 4)), true) +
+      '<p class="prop-pieces">' + esc(o.pieces.map((p) => p.name).join(" · ")) + "</p>" +
+      '<ul class="why">' + o.why.map((w) => "<li>" + esc(w) + "</li>").join("") + (o.tip ? "<li>Astuce : " + esc(o.tip) + "</li>" : "") + "</ul>" +
+      '<button class="btn primary block" type="button" data-pr="' + i + '">Je prends celle-ci</button></article>').join("");
+  hydratePhotos($("props-sheet"));
+  $("props-overlay").hidden = false; $("props-sheet").scrollTop = 0;
+  $("btn-props").hidden = false;
+}
+function chooseProposal(i) {
+  const o = proposals && proposals.list[+i]; if (!o) return;
+  const c = context();
+  current = { key: comboKey(o.pieces), pieces: o.pieces, reasons: o.why, tip: o.tip, title: o.title, ai: true };
+  seen.push(current.key);
+  savePick(c);
+  wornKey = null;
+  const over = proposals.list.filter((x) => x !== o).map((x) => x.angle);
+  mutate((d) => { d.aiChoices = (d.aiChoices || []).concat({ key: current.key, angle: o.angle, over, t: Date.now() }).slice(-30); });
+  $("props-overlay").hidden = true;
+  renderOutfit();
+  toast("« " + o.angle + " » retenue.");
+}
+
+// ---------------- BILAN DU DRESSING ----------------
+let auditBusy = false;
+function openAudit() {
+  renderAudit();
+  $("audit-overlay").hidden = false; $("audit-sheet").scrollTop = 0;
+}
+function renderAudit(status) {
+  const a = data().audit;
+  const byId = new Map(liveItems().map((i) => [i.id, i]));
+  const chip = (id) => { const it = byId.get(id); if (!it) return ""; const path = it.cut || it.photo;
+    return '<button type="button" class="audit-piece" data-aid="' + esc(id) + '"><span class="alt-img ' + (it.cut ? "fl-cut" : it.photo ? "fl-photo" : "fl-glyph") + '"' + (path && sync ? ' data-photo="' + esc(path) + '" data-alt="' + esc(it.name) + '"' : "") + ">" + glyph(it.cat, it.color, it.acc, it.name) + '</span><span class="alt-name">' + esc(it.name) + "</span></button>"; };
+  const refList = (title, hint, arr) => { const ok = (arr || []).filter((r) => byId.has(r.id)); return ok.length ? '<section class="audit-sec"><h3>' + title + '</h3><p class="hint">' + hint + "</p>" +
+    ok.map((r) => '<div class="audit-row">' + chip(r.id) + '<div><p>' + esc(r.why) + "</p>" + (r.idea ? '<p class="audit-idea">→ ' + esc(r.idea) + "</p>" : "") + "</div></div>").join("") + "</section>" : ""; };
+  const key = aiKey();
+  let html = '<div class="sheet-head"><div><span class="label">La styliste</span><h2>Bilan du dressing</h2></div><button class="x" type="button" data-au="close" aria-label="Fermer">✕</button></div>';
+  if (status) html += '<p class="note">' + esc(status) + "</p>";
+  if (a && a.summary) {
+    html += '<p class="hint">Fait le ' + new Date(a.t).toLocaleDateString("fr-FR", { day: "numeric", month: "long" }) + " sur " + a.count + " pièces.</p>" +
+      '<section class="audit-sec"><p class="audit-summary">' + esc(a.summary) + "</p>" + (a.palette ? '<p class="hint">Palette : ' + esc(a.palette) + "</p>" : "") + "</section>" +
+      refList("À ressortir", "De bonnes pièces que tu portes peu, avec une idée pour les remettre en jeu.", a.toWear) +
+      refList("Orphelines", "Elles vont avec trop peu de choses dans ton dressing.", a.orphans) +
+      ((a.dupes || []).length ? '<section class="audit-sec"><h3>Doublons</h3><p class="hint">Elles jouent presque le même rôle.</p>' + a.dupes.map((d) => '<div class="audit-dupe"><div class="audit-dupe-row">' + d.ids.map(chip).join("") + "</div><p>" + esc(d.why) + "</p></div>").join("") + "</section>" : "") +
+      refList("À questionner", "Peu ou jamais portées, et loin de ton style : à donner, vendre ou retoucher.", a.toQuestion) +
+      ((a.buys || []).length ? '<section class="audit-sec"><h3>Achats utiles</h3><p class="hint">Les plus utiles d\'abord.</p><ol class="audit-buys">' + a.buys.map((b) => "<li><strong>" + esc(b.what) + "</strong><br>" + esc(b.why) + "</li>").join("") + "</ol></section>" : "");
+  } else html += '<p class="hint">La styliste regarde toutes tes pièces (photos comprises), ce que tu portes vraiment, tes styles et tes looks favoris, puis te dit ce qui marche, ce qui dort, ce qui fait doublon et ce qui manque. Environ 3 centimes.</p>';
+  html += '<button class="btn primary block" type="button" data-au="run"' + (auditBusy ? " disabled" : "") + ">" + (auditBusy ? "La styliste regarde ton dressing…" : !key ? "Ajouter la clé de la styliste" : a ? "Refaire le bilan" : "Faire le bilan") + "</button>";
+  $("audit-sheet").innerHTML = html;
+  hydratePhotos($("audit-sheet"));
+}
+async function runAudit() {
+  const key = aiKey();
+  if (!key) { $("audit-overlay").hidden = true; showTab("settings"); setTimeout(() => $("ai-key").focus(), 50); return; }
+  if (isDemo()) { toast("Ajoute d'abord ton profil."); return; }
+  const items = liveItems();
+  if (items.length < 5) { renderAudit("Ajoute au moins 5 pièces pour un bilan utile."); return; }
+  auditBusy = true; renderAudit();
+  const since = Date.now() - 183 * 864e5; const wears = new Map();
+  for (const h of data().history || []) { if (h.deleted || (h.t && h.t < since)) continue; for (const id of h.items) wears.set(id, (wears.get(id) || 0) + 1); }
+  const withWears = items.map((i) => ({ ...i, wears: wears.get(i.id) || 0 }));
+  try {
+    const r = await auditWardrobe(key, { items: withWears, prefs: prefs(), looks: liveLooks(), day: dayStr(0),
+      loadImage: (it) => { const path = it.cut || it.photo; if (!path || !sync) return Promise.resolve(null); return sync.photoUrl(path).then((u) => fetch(u)).then((x) => x.blob()); } });
+    mutate((d) => { d.audit = { ...r, count: items.length, t: Date.now() }; });
+    auditBusy = false; setTimeout(() => renderAudit(), 60);
+  } catch (e) { auditBusy = false; renderAudit(aiErrText(e)); }
 }
 
 // ---------------- CHANGER UNE PIÈCE ----------------
@@ -225,7 +302,7 @@ function openPiece(id) {
   }
   pieceFor = { id, alts };
   const mainCount = current.pieces.filter((x) => x.cat === p.cat).length;
-  const removable = p.cat === "accessoire" || p.cat === "veste" || (p.cat === "haut" && mainCount > 1);
+  const removable = p.cat === "accessoire" || p.cat === "veste" || p.cat === "manteau" || (p.cat === "haut" && mainCount > 1);
   $("piece-sheet").innerHTML = '<div class="sheet-head"><div><span class="label">' + esc(catLabel(p)) + "</span><h2>" + esc(p.name) + '</h2></div><button class="x" type="button" data-pa="close" aria-label="Fermer">✕</button></div>' +
     '<div class="actions"><button class="btn" type="button" data-pa="fiche">Voir la fiche</button>' + (removable ? '<button class="btn" type="button" data-pa="remove">Enlever de la tenue</button>' : "") + "</div>" +
     '<span class="label">' + (alts.length ? "Changer pour… (les mieux assorties d'abord)" : "Rien d'autre de propre dans cette catégorie pour le moment.") + "</span>" +
@@ -354,7 +431,7 @@ function renderOutfit() {
     return;
   }
   ["btn-wear", "btn-other", "btn-like", "btn-dislike"].forEach((id) => ($(id).disabled = false));
-  const order = { veste: 0, haut: 1, robe: 1, bas: 2, chaussures: 3, accessoire: 4 };
+  const order = { manteau: 0, veste: 0, haut: 1, robe: 1, bas: 2, chaussures: 3, accessoire: 4 };
   const pieces = current.pieces.slice().sort((a, b) => (order[a.cat] ?? 5) - (order[b.cat] ?? 5));
   lay.innerHTML = flatlay(pieces, false, true) +
     '<ul class="fl-list">' + pieces.map((p) => '<li><button type="button" class="piece-row" data-pid="' + esc(p.id) + '"><span class="tag">' + esc(catLabel(p)) + '</span><span class="piece-name">' + esc(p.name) + '</span><span class="piece-meta">' + wornText(p) + '</span><span class="chev" aria-hidden="true">›</span></button></li>').join("") + "</ul>" +
@@ -534,6 +611,7 @@ async function askAi() {
     const k = h.items.slice().sort().join("|"); wornCount.set(k, (wornCount.get(k) || 0) + 1);
   }
   const worn = [...wornCount].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, n]) => { const t = names(k); return t ? t + (n > 1 ? " (" + n + " fois)" : "") : ""; }).filter(Boolean);
+  const choices = (data().aiChoices || []).slice(-8).reverse().map((x) => { const n = names(x.key); return n ? n + " (" + x.angle.toLowerCase() + (x.over && x.over.length ? ", préférée à : " + x.over.join(" / ").toLowerCase() : "") + ")" : ""; }).filter(Boolean);
   const composed = liveOutfits().filter((o) => o.source === "moi").slice(0, 8).map((o) => o.ids.map((id) => byId.get(id)).filter(Boolean).map((i) => i.name).join(" + ")).filter(Boolean);
   try {
     const loadImage = (it) => {
@@ -541,13 +619,10 @@ async function askAi() {
       if (!path || !sync) return Promise.resolve(null);
       return sync.photoUrl(path).then((u) => fetch(u)).then((r) => r.blob());
     };
-    const r = await askStylist(key, { items, ctx: c, weather: weather[dayOffset], prefs: prefs(), looks: liveLooks(), loadLook: (l) => sync ? sync.photoUrl(l.photo).then((u) => fetch(u)).then((r) => r.blob()) : Promise.resolve(null), liked, disliked, lessons, noPieces, worn, composed, current: current.pieces.map((p) => p.name).join(" + "), loadImage });
-    const pieces = r.ids.map((id) => byId.get(id));
-    current = { key: comboKey(pieces), pieces, reasons: r.why, tip: r.tip, title: r.title, ai: true };
-    seen.push(current.key);
-    savePick(c);
-    wornKey = null; msg.hidden = true;
-    renderOutfit();
+    const r = await askStylist(key, { items, ctx: c, weather: weather[dayOffset], prefs: prefs(), choices, looks: liveLooks(), loadLook: (l) => sync ? sync.photoUrl(l.photo).then((u) => fetch(u)).then((r) => r.blob()) : Promise.resolve(null), liked, disliked, lessons, noPieces, worn, composed, current: current.pieces.map((p) => p.name).join(" + "), loadImage });
+    msg.hidden = true;
+    proposals = { day: c.day, list: r.options.map((o) => ({ ...o, pieces: o.ids.map((id) => byId.get(id)).filter(Boolean) })).filter((o) => o.pieces.length) };
+    openProposals();
   } catch (e) {
     const k = e instanceof AiError ? e.kind : "other";
     msg.textContent = {
@@ -899,7 +974,7 @@ function renderProgress(all) {
   const n = all.filter((i) => i.cat !== "accessoire").length;
   const next = MILESTONES.find((m) => m.n > n);
   const prev = [...MILESTONES].reverse().find((m) => m.n <= n);
-  const missingCats = [["haut", "un haut"], ["bas", "un bas"], ["chaussures", "des chaussures"], ["veste", "une veste"]].filter(([c]) => !all.some((i) => i.cat === c)).map(([, l]) => l);
+  const missingCats = [["haut", "un haut"], ["bas", "un bas"], ["chaussures", "des chaussures"], ["veste", "une veste ou un manteau"]].filter(([c]) => !all.some((i) => i.cat === c || (c === "veste" && i.cat === "manteau"))).map(([, l]) => l);
   if (next) {
     const from = prev ? prev.n : 0;
     const pct = Math.round(((n - from) / (next.n - from)) * 100);
@@ -914,10 +989,60 @@ function renderProgress(all) {
   if (n < 4) { gp.hidden = true; return; }
   const { total, gaps } = suggestGaps(all);
   gp.innerHTML = '<div class="outfit-head"><span class="label">Pour plus de tenues</span><span class="progress">' + (total >= 2000 ? "2000+" : total) + " tenue" + (total > 1 ? "s" : "") + " possibles</span></div>" +
-    (gaps.length ? '<ul class="gap-list">' + gaps.map((g) => '<li><span>Ajoute <strong>' + esc(g.label) + "</strong></span><span class=\"gain\">+" + g.gain + (g.cat === "veste" ? " tenues couvertes" : " tenues") + "</span></li>").join("") + "</ul>" +
+    (gaps.length ? '<ul class="gap-list">' + gaps.map((g) => '<li><span>Ajoute <strong>' + esc(g.label) + "</strong></span><span class=\"gain\">+" + g.gain + (g.cat === "veste" || g.cat === "manteau" ? " tenues couvertes" : " tenues") + "</span></li>").join("") + "</ul>" +
       '<p class="note small">D\'après ce que tu as déjà : couleurs, saisons et occasions qui vont ensemble. Utile avant les soldes.</p>'
       : '<p class="note">Ton dressing est bien équilibré : aucune pièce de base n\'ajouterait beaucoup de tenues.</p>');
   gp.hidden = false;
+}
+
+// ---------------- MIGRATION : la catégorie « Manteau » ----------------
+// une seule fois par dressing : les vestes dont le nom dit manteau, trench, parka, doudoune… passent en Manteau
+function migrateCoats() {
+  if (!sync || !sync.loaded) return;
+  const flag = "dressing:migr-manteau:" + sync.profile.id;
+  if ((doc && doc.migr && doc.migr.manteau) || LS.get(flag, false)) return;
+  LS.set(flag, true);
+  const ids = (sync.doc.items || []).filter((i) => !i.deleted && i.cat === "veste" && guess(i.name).cat === "manteau").map((i) => i.id);
+  sync.change((d) => {
+    d.migr = { ...(d.migr || {}), manteau: 1 };
+    for (const it of d.items) if (ids.includes(it.id)) { it.cat = "manteau"; it.updatedAt = Date.now(); }
+  });
+  if (ids.length) toast(ids.length + (ids.length > 1 ? " pièces rangées" : " pièce rangée") + " dans la nouvelle catégorie Manteau.");
+}
+
+// ---------------- DÉTOURAGE ----------------
+const cutMode = () => { try { return localStorage.getItem("dressing:cut") === "simple" ? "simple" : "precis"; } catch (e) { return "precis"; } };
+let cutStatusEl = null; // où afficher la progression du premier téléchargement du modèle
+onCutProgress((pct) => { if (cutStatusEl && pct < 100) cutStatusEl.textContent = "Préparation du détourage précis (une seule fois) : " + pct + " %"; });
+function renderCutChips() {
+  const m = cutMode();
+  $("cut-chips").innerHTML = [["precis", "Précis (IA sur le téléphone)"], ["simple", "Simple (fond uni)"]].map(([k, l]) => '<button type="button" class="chip" data-cut="' + k + '" aria-pressed="' + (m === k) + '">' + l + "</button>").join("");
+}
+let recutting = false;
+async function recutAll() {
+  if (isDemo()) { toast("Ajoute d'abord ton profil."); return; }
+  if (recutting) return;
+  const list = liveItems().filter((i) => i.photo);
+  if (!list.length) { toast("Aucune photo à détourer."); return; }
+  recutting = true; const st = $("recut-status"); st.hidden = false; $("btn-recut").disabled = true;
+  cutStatusEl = st; let done = 0, better = 0;
+  for (const it of list) {
+    st.textContent = "Détourage " + (done + 1) + " sur " + list.length + " : " + it.name + "…";
+    try {
+      const blob = await sync.photoUrl(it.photo).then((u) => fetch(u)).then((r) => r.blob());
+      const r = await removeBackground(blob);
+      if (r.ok && r.blob) {
+        const cut = await sync.uploadPhoto(r.blob, it.id, "-cut");
+        const old = it.cut;
+        sync.change((d) => { const x = d.items.find((i) => i.id === it.id); if (x) { x.cut = cut; x.updatedAt = Date.now(); } });
+        if (old && old !== cut) sync.deletePhoto(old);
+        better++;
+      }
+    } catch (e) {}
+    done++;
+  }
+  cutStatusEl = null; recutting = false; $("btn-recut").disabled = false;
+  st.textContent = better + " photo" + (better > 1 ? "s" : "") + " détourée" + (better > 1 ? "s" : "") + " sur " + list.length + ". Si une pièce te plaît moins détourée, ouvre sa fiche et choisis « Photo entière ».";
 }
 
 // ---------------- LOOKS QUE J'AIME ----------------
@@ -1040,7 +1165,7 @@ function savedAction(act, b) {
 
 // composer
 let compose = null;
-const SINGLE = { bas: 1, robe: 1, veste: 1, chaussures: 1, haut: 2, accessoire: 4 };
+const SINGLE = { bas: 1, robe: 1, veste: 1, manteau: 1, chaussures: 1, haut: 2, accessoire: 4 };
 function openCompose(id) {
   if (isDemo()) { openProfile(null); return; }
   const o = id ? (data().outfits || {})[id] : null;
@@ -1327,6 +1452,7 @@ function renderSettings() {
   $("style-count").textContent = chosen.length + " / 3";
   $("style-desc").innerHTML = STYLES.filter((x) => chosen.includes(x.id)).map((x) => "<li><strong>" + esc(x.name) + "</strong> : " + esc(x.desc) + "</li>").join("");
   if (document.activeElement !== $("style-note")) $("style-note").value = prefs().note || "";
+  renderCutChips();
   if (!($("looks").contains(document.activeElement) && document.activeElement.tagName === "INPUT")) renderLooks();
   const k = aiKey();
   if (document.activeElement !== $("ai-key")) $("ai-key").value = k ? "••••••••" + k.slice(-4) : "";
@@ -1385,6 +1511,7 @@ let dataTimer = null;
 let pickReady = false;
 function renderAfterData() {
   if (!pickReady && sync && sync.loaded) { pickReady = true; current = null; seen = []; }
+  migrateCoats();
   clearTimeout(dataTimer);
   dataTimer = setTimeout(() => { refreshOutfit(); renderWardrobe(); renderOutfits(); renderAgenda(); renderControls(); renderSettings(); }, 30);
 }
@@ -1589,8 +1716,10 @@ async function runCutout(blob) {
   const d = draft;
   d.cutBusy = true;
   $("photo-status").textContent = "Détourage du vêtement…";
+  cutStatusEl = $("photo-status");
   let r;
   try { r = await removeBackground(blob); } catch (e) { r = { ok: false }; }
+  if (cutStatusEl === $("photo-status")) cutStatusEl = null;
   d.cutBusy = false;
   if (draft !== d) return; // fiche fermée entre-temps
   if (r.ok) {
@@ -1598,7 +1727,7 @@ async function runCutout(blob) {
     $("photo-status").textContent = "Vêtement détouré. Si le résultat ne te plaît pas, choisis « Photo entière ».";
   } else {
     d.useCut = false;
-    $("photo-status").textContent = "Fond trop chargé ou trop proche du vêtement : photo gardée entière. Astuce : pose le vêtement à plat sur un drap ou un sol uni, de couleur différente, sans qu'il touche les bords.";
+    $("photo-status").textContent = "Le vêtement n'a pas pu être détouré : photo gardée entière. Astuce : prends tout le vêtement, sans qu'il touche les bords de la photo.";
   }
   // couleur et motif, calculés sur le téléphone
   try {
@@ -1916,6 +2045,13 @@ function bind() {
   delegate("with-sheet", "wa", (act, b) => withAction(act, b));
   on("with-overlay", "click", (e) => { if (e.target === $("with-overlay")) $("with-overlay").hidden = true; });
   delegate("lay", "pid", (id) => openPiece(id));
+  on("btn-audit", "click", openAudit);
+  delegate("audit-sheet", "au", (v) => { if (v === "close") $("audit-overlay").hidden = true; else runAudit(); });
+  delegate("audit-sheet", "aid", (id) => { const it = liveItems().find((i) => i.id === id); if (it) { $("audit-overlay").hidden = true; openItem(it); } });
+  on("audit-overlay", "click", (e) => { if (e.target === $("audit-overlay")) $("audit-overlay").hidden = true; });
+  delegate("props-sheet", "pr", (v) => { if (v === "close") $("props-overlay").hidden = true; else chooseProposal(v); });
+  on("props-overlay", "click", (e) => { if (e.target === $("props-overlay")) $("props-overlay").hidden = true; });
+  on("btn-props", "click", openProposals);
   delegate("piece-sheet", "pa", (act, b) => pieceAction(act, b));
   delegate("piece-sheet", "alti", (i) => pickAlt(i));
   on("piece-overlay", "click", (e) => { if (e.target === $("piece-overlay")) $("piece-overlay").hidden = true; });
@@ -1997,6 +2133,8 @@ function bind() {
   delegate("style-chips", "style", toggleStyle);
   delegate("designer-chips", "style", toggleStyle);
   on("style-note", "change", (e) => setPrefs({ note: e.target.value.trim() }));
+  delegate("cut-chips", "cut", (k) => { try { localStorage.setItem("dressing:cut", k); } catch (e) {} renderCutChips(); });
+  on("btn-recut", "click", recutAll);
   on("btn-look-add", "click", () => $("look-file").click());
   on("look-file", "change", (e) => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) addLooks(fs); });
   on("looks", "click", (e) => {

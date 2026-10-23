@@ -80,6 +80,7 @@
         <div class="chips" id="why-chips"></div>
       </div>
       <button class="btn block" id="btn-ai" type="button">Demander à la styliste</button>
+      <button class="link" id="btn-props" type="button" hidden>Revoir les 3 propositions de la styliste</button>
       <button class="btn primary block" id="btn-wear" type="button">Je la porte</button>
       <div class="worn-box" id="worn-box" hidden></div>
       <p class="note" id="outfit-msg" hidden></p>
@@ -118,6 +119,7 @@
       </section>
       <button class="btn primary block" type="button" id="btn-add">Ajouter un vêtement</button>
       <button class="btn block" type="button" id="btn-batch">Ajouter plusieurs vêtements</button>
+      <button class="btn block" type="button" id="btn-audit">Bilan du dressing par la styliste</button>
       <div class="grid" id="grid"></div>
     </div>
 
@@ -185,6 +187,12 @@
       <button class="btn primary" type="button" id="btn-ai-save">Vérifier et enregistrer</button>
     </div>
     <p class="note" id="ai-key-status" hidden></p>
+
+    <div class="outfit-head" style="margin-top:8px"><h2>Détourage des photos</h2></div>
+    <p class="hint">« Précis » utilise un petit modèle d'IA qui tourne sur le téléphone : rien n'est envoyé, c'est gratuit, et ça marche même sur un fond chargé. Il se télécharge une seule fois (environ 55 Mo, de préférence en Wi-Fi). « Simple » marche seulement sur un fond uni et bien contrasté.</p>
+    <div class="chips" id="cut-chips"></div>
+    <button class="btn block" type="button" id="btn-recut" style="margin-top:10px">Refaire le détourage de toutes les photos</button>
+    <p class="note" id="recut-status" hidden></p>
 
     <div class="outfit-head" style="margin-top:8px"><h2>Lieu pour la météo</h2></div>
     <p class="hint" id="loc-current"></p>
@@ -391,6 +399,16 @@
 <!-- ============ VALISE : DÉTAIL ============ -->
 <div class="overlay" id="tripview-overlay" hidden>
   <div class="sheet" id="tripview"></div>
+</div>
+
+<!-- ============ BILAN DU DRESSING ============ -->
+<div class="overlay" id="audit-overlay" hidden>
+  <div class="sheet" id="audit-sheet"></div>
+</div>
+
+<!-- ============ LES 3 PROPOSITIONS ============ -->
+<div class="overlay" id="props-overlay" hidden>
+  <div class="sheet" id="props-sheet"></div>
 </div>
 
 <!-- ============ UNE PIÈCE DE LA TENUE ============ -->
