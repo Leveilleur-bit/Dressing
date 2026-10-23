@@ -11,7 +11,7 @@ import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromCom
 import { detectColor } from "./js/colorid.js";
 import { removeBackground, onCutProgress } from "./js/cutout.js";
 
-const VERSION = "1.12.1";
+const VERSION = "1.12.2";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -1019,18 +1019,45 @@ function renderCutChips() {
   $("cut-chips").innerHTML = [["precis", "Précis (IA sur le téléphone)"], ["simple", "Simple (fond uni)"]].map(([k, l]) => '<button type="button" class="chip" data-cut="' + k + '" aria-pressed="' + (m === k) + '">' + l + "</button>").join("");
 }
 let recutting = false;
+// suivi persistant : si le navigateur recharge la page en plein détourage (manque de mémoire),
+// on le voit au lancement suivant et on reprend là où on en était
+const RECUT = "dressing:recut", CUTRUN = "dressing:cut-running";
+const recutState = () => LS.get(RECUT, null);
+function noteCutStart() { const r = LS.get(CUTRUN, { n: 0 }); LS.set(CUTRUN, { n: r.n, on: true, at: Date.now() }); }
+function noteCutEnd() { LS.set(CUTRUN, { n: 0, on: false }); }
+/** Au lancement : un détourage était en cours → la page a planté. Deux fois de suite → mode simple. */
+function checkCutCrash() {
+  const r = LS.get(CUTRUN, null);
+  if (!r || !r.on) return;
+  const n = (r.n || 0) + 1;
+  LS.set(CUTRUN, { n, on: false });
+  if (n >= 2 && cutMode() === "precis") {
+    try { localStorage.setItem("dressing:cut", "simple"); } catch (e) {}
+    cutCrashNote = "Le téléphone a manqué de mémoire deux fois pendant le détourage précis : l'appli repasse en détourage simple. Tu peux réessayer « Précis » après avoir fermé des onglets ou d'autres applis.";
+  } else cutCrashNote = "Le détourage s'est interrompu : le téléphone a sûrement manqué de mémoire. Ferme d'autres onglets ou applis, puis relance : ça reprend là où ça s'était arrêté.";
+}
+let cutCrashNote = "";
 async function recutAll() {
   if (isDemo()) { toast("Ajoute d'abord ton profil."); return; }
   if (recutting) return;
-  const list = liveItems().filter((i) => i.photo);
-  if (!list.length) { toast("Aucune photo à détourer."); return; }
-  recutting = true; const st = $("recut-status"); st.hidden = false; $("btn-recut").disabled = true;
-  cutStatusEl = st; let done = 0, better = 0;
+  const prev = recutState();
+  const doneIds = new Set(prev && prev.profile === sync.profile.id ? prev.done : []);
+  const all = liveItems().filter((i) => i.photo);
+  const list = all.filter((i) => !doneIds.has(i.id));
+  if (!list.length) { LS.set(RECUT, null); toast("Toutes les photos sont déjà détourées."); renderRecut(); return; }
+  recutting = true; cutCrashNote = ""; const st = $("recut-status"); st.hidden = false; $("btn-recut").disabled = true;
+  LS.set(RECUT, { profile: sync.profile.id, done: [...doneIds], total: all.length });
+  // garde l'écran allumé pendant le travail
+  let lock = null; try { lock = await navigator.wakeLock.request("screen"); } catch (e) {}
+  cutStatusEl = st; let better = 0;
   for (const it of list) {
-    st.textContent = "Détourage " + (done + 1) + " sur " + list.length + " : " + it.name + "…";
+    if (!recutting) break;
+    st.textContent = "Détourage " + (doneIds.size + 1) + " sur " + all.length + " : " + it.name + "… Laisse l'appli ouverte.";
     try {
       const blob = await sync.photoUrl(it.photo).then((u) => fetch(u)).then((r) => r.blob());
+      noteCutStart();
       const r = await removeBackground(blob);
+      noteCutEnd();
       if (r.ok && r.blob) {
         const cut = await sync.uploadPhoto(r.blob, it.id, "-cut");
         const old = it.cut;
@@ -1038,11 +1065,24 @@ async function recutAll() {
         if (old && old !== cut) sync.deletePhoto(old);
         better++;
       }
-    } catch (e) {}
-    done++;
+    } catch (e) { noteCutEnd(); }
+    doneIds.add(it.id);
+    LS.set(RECUT, { profile: sync.profile.id, done: [...doneIds], total: all.length });
   }
-  cutStatusEl = null; recutting = false; $("btn-recut").disabled = false;
+  try { if (lock) lock.release(); } catch (e) {}
+  LS.set(RECUT, null);
+  cutStatusEl = null; recutting = false; $("btn-recut").disabled = false; renderRecut();
+  st.hidden = false;
   st.textContent = better + " photo" + (better > 1 ? "s" : "") + " détourée" + (better > 1 ? "s" : "") + " sur " + list.length + ". Si une pièce te plaît moins détourée, ouvre sa fiche et choisis « Photo entière ».";
+}
+async function cutTracked(blob) { noteCutStart(); try { return await removeBackground(blob); } finally { noteCutEnd(); } }
+function renderRecut() {
+  if (recutting) return;
+  const r = recutState();
+  const left = r && sync && r.profile === sync.profile.id ? r.total - r.done.length : 0;
+  $("btn-recut").textContent = left > 0 ? "Reprendre le détourage (" + left + " restante" + (left > 1 ? "s" : "") + ")" : "Refaire le détourage de toutes les photos";
+  const st = $("recut-status");
+  if (cutCrashNote) { st.hidden = false; st.textContent = cutCrashNote; }
 }
 
 // ---------------- LOOKS QUE J'AIME ----------------
@@ -1343,7 +1383,7 @@ async function runGroup(blob) {
       if (bmp && f.box) {
         e.blob = await cropBox(bmp, f.box);
         // détourage si la pièce est posée sur un fond uni (lit, sol) ; sinon on garde le cadrage
-        try { const cr = await removeBackground(e.blob); if (cr.ok) e.cutBlob = cr.blob; } catch (x) {}
+        try { const cr = await cutTracked(e.blob); if (cr.ok) e.cutBlob = cr.blob; } catch (x) {}
         e.url = URL.createObjectURL(e.cutBlob || e.blob);
       }
       batch.entries.push(e);
@@ -1368,7 +1408,7 @@ function pumpQueue() {
 async function processSingle(e) {
   const b = batch;
   e.status = "busy"; renderBatch();
-  try { const cr = await removeBackground(e.blob); if (cr.ok) { e.cutBlob = cr.blob; URL.revokeObjectURL(e.url); e.url = URL.createObjectURL(cr.blob); } } catch (x) {}
+  try { const cr = await cutTracked(e.blob); if (cr.ok) { e.cutBlob = cr.blob; URL.revokeObjectURL(e.url); e.url = URL.createObjectURL(cr.blob); } } catch (x) {}
   try {
     const rec = await recognizeItem(aiKey(), e.cutBlob || e.blob);
     if (!rec.color) { try { const col = await detectColor(e.cutBlob || e.blob, { cut: !!e.cutBlob }); if (col) rec.color = col.color; } catch (x) {} }
@@ -1452,7 +1492,7 @@ function renderSettings() {
   $("style-count").textContent = chosen.length + " / 3";
   $("style-desc").innerHTML = STYLES.filter((x) => chosen.includes(x.id)).map((x) => "<li><strong>" + esc(x.name) + "</strong> : " + esc(x.desc) + "</li>").join("");
   if (document.activeElement !== $("style-note")) $("style-note").value = prefs().note || "";
-  renderCutChips();
+  renderCutChips(); renderRecut();
   if (!($("looks").contains(document.activeElement) && document.activeElement.tagName === "INPUT")) renderLooks();
   const k = aiKey();
   if (document.activeElement !== $("ai-key")) $("ai-key").value = k ? "••••••••" + k.slice(-4) : "";
@@ -1718,7 +1758,9 @@ async function runCutout(blob) {
   $("photo-status").textContent = "Détourage du vêtement…";
   cutStatusEl = $("photo-status");
   let r;
+  noteCutStart();
   try { r = await removeBackground(blob); } catch (e) { r = { ok: false }; }
+  noteCutEnd();
   if (cutStatusEl === $("photo-status")) cutStatusEl = null;
   d.cutBusy = false;
   if (draft !== d) return; // fiche fermée entre-temps
@@ -2133,6 +2175,7 @@ function bind() {
   delegate("style-chips", "style", toggleStyle);
   delegate("designer-chips", "style", toggleStyle);
   on("style-note", "change", (e) => setPrefs({ note: e.target.value.trim() }));
+  checkCutCrash();
   delegate("cut-chips", "cut", (k) => { try { localStorage.setItem("dressing:cut", k); } catch (e) {} renderCutChips(); });
   on("btn-recut", "click", recutAll);
   on("btn-look-add", "click", () => $("look-file").click());
