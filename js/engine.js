@@ -44,7 +44,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   // une pièce réservée à la maison ne sort jamais
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
   const must = opts.must || null; // « Que porter avec… ? » : cette pièce doit faire partie de la tenue
-  const all = data.items.filter((i) => !i.deleted && (!i.stored || opts.includeStored || (must && i.id === must.id)) && (!i.dirty || (must && i.id === must.id)) && (home || !homeOnly(i) || (must && i.id === must.id)));
+  const all = data.items.filter((i) => !i.deleted && (!i.wish || (must && i.id === must.id)) && (!i.repair || (must && i.id === must.id)) && (!i.stored || opts.includeStored || (must && i.id === must.id)) && (!i.dirty || (must && i.id === must.id)) && (home || !homeOnly(i) || (must && i.id === must.id)));
   const items = all.filter((i) => i.cat !== "accessoire");
   const accessories = all.filter((i) => i.cat === "accessoire");
   const fb = data.feedback || {};

@@ -450,3 +450,24 @@ export async function auditWardrobe(key, { items, prefs, looks = [], loadImage, 
     buys: (Array.isArray(out.achats) ? out.achats : []).map((a) => ({ what: String(a.piece || ""), why: String(a.pourquoi || ""), prio: +a.priorite || 2 })).filter((a) => a.what).sort((a, b) => a.prio - b.prio)
   };
 }
+
+/** Lit une capture d'écran de fiche produit (site marchand, Vinted…) : le vêtement, sa marque, son prix, la boutique, et où est la photo du produit. */
+export async function readShopScreenshot(key, blob) {
+  const sch = itemSchema(true);
+  sch.properties.prix = { type: "number", description: "prix affiché en euros (le prix soldé s'il y en a un), 0 si aucun prix" };
+  sch.properties.boutique = { ...S.strOrNull, description: "nom du site ou de la boutique (Zara, Vinted, Sézane…), chaîne vide si inconnu" };
+  sch.properties.marque = { ...S.strOrNull, description: "marque du vêtement, écrite sur la page, chaîne vide si absente" };
+  sch.properties.erreur = { ...S.strOrNull, description: "« pas une fiche produit » si l'image ne montre pas de vêtement à vendre, sinon chaîne vide" };
+  sch.required = [];
+  const r = await askVision(key, blob,
+    "Tu lis des captures d'écran de boutiques en ligne pour remplir la fiche d'un dressing. Tu réponds en français, avec les valeurs proposées uniquement.",
+    "Voici une capture d'écran d'une fiche produit. Décris le vêtement principal mis en vente, lis sa marque, son prix et la boutique, et donne la boîte qui entoure la photo principale du vêtement (sans le texte ni les boutons). Réponds avec l'outil lire_fiche_produit.",
+    { size: 1400, maxTokens: 1500, name: "lire_fiche_produit", schema: sch, description: "Lit une fiche produit." });
+  if (r.erreur && !r.nom) throw new AiError("notcloth", r.erreur);
+  const out = normalizeItem(r);
+  const b = Array.isArray(r.boite) && r.boite.length === 4 ? r.boite.map((v) => Math.max(0, Math.min(1000, +v || 0)) / 1000) : null;
+  out.box = b && b[2] - b[0] > 0.05 && b[3] - b[1] > 0.05 ? b : null;
+  out.price = +r.prix > 0 ? Math.round(+r.prix * 100) / 100 : null;
+  out.shop = typeof r.boutique === "string" && r.boutique.trim() ? r.boutique.trim().slice(0, 40) : null;
+  return out;
+}

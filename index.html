@@ -102,6 +102,7 @@
     <div class="seg" role="group" aria-label="Affichage">
       <button type="button" id="wd-tab-pieces" aria-pressed="true">Pièces</button>
       <button type="button" id="wd-tab-outfits" aria-pressed="false">Mes tenues</button>
+      <button type="button" id="wd-tab-wishes" aria-pressed="false">Envies</button>
     </div>
 
     <div class="view" id="wd-pieces">
@@ -119,11 +120,24 @@
         </div>
         <div class="laundry-row" id="laundry-row"></div>
       </section>
+      <section class="laundry" id="repair" hidden>
+        <div class="outfit-head"><span class="label">À réparer · plus proposées d'ici là</span></div>
+        <div class="laundry-row" id="repair-row"></div>
+      </section>
       <button class="btn primary block" type="button" id="btn-add">Ajouter un vêtement</button>
       <button class="btn block" type="button" id="btn-batch">Ajouter plusieurs vêtements</button>
+      <button class="btn block" type="button" id="btn-shop">Ajouter depuis une capture de boutique</button>
+      <input class="visually-hidden" type="file" id="shop-file" accept="image/*">
       <button class="btn block" type="button" id="btn-audit">Bilan du dressing par la styliste</button>
       <button class="btn block" type="button" id="btn-stats">Statistiques</button>
       <div class="grid" id="grid"></div>
+    </div>
+
+    <div class="view" id="wd-wishes" hidden>
+      <p class="hint">Les vêtements que tu hésites à acheter. Une capture d'écran de la boutique suffit : la styliste lit le nom, la marque et le prix.</p>
+      <button class="btn primary block" type="button" id="btn-wish-shop">Ajouter depuis une capture de boutique</button>
+      <button class="btn block" type="button" id="btn-wish-add">Ajouter une envie à la main</button>
+      <div class="wishes" id="wishes"></div>
     </div>
 
     <div class="view" id="wd-outfits" hidden>
@@ -151,9 +165,9 @@
     <div class="trips" id="trips"></div>
     <button class="btn primary block" type="button" id="btn-new-trip">Préparer une valise</button>
     <div class="outfit-head" style="margin-top:8px">
-      <h2>Déjà porté</h2>
+      <h2>Calendrier</h2>
     </div>
-    <div class="history" id="history"></div>
+    <div class="calendar" id="calendar"></div>
   </main>
 
   <!-- ============ RÉGLAGES ============ -->
@@ -265,6 +279,12 @@
     <div class="group">
       <label class="label" for="f-brand">Marque (facultatif)</label>
       <input type="text" id="f-brand" list="brand-list" placeholder="ex. Barnie, Sézane…" maxlength="40" autocomplete="off">
+    </div>
+    <div class="row-2">
+      <div class="group"><label class="label" for="f-price">Prix d'achat (€)</label><input type="text" id="f-price" inputmode="decimal" maxlength="10" placeholder="ex. 49,90" autocomplete="off"></div>
+      <div class="group"><label class="label" for="f-shop">Boutique</label><input type="text" id="f-shop" maxlength="40" placeholder="ex. Vinted, Zara…" autocomplete="off"></div>
+    </div>
+    <div class="group" id="f-wish-group"><span class="label">Dans mon dressing ?</span><div class="chips" id="f-wish"></div>
       <datalist id="brand-list"></datalist>
     </div>
     <div class="group"><span class="label">Catégorie</span><div class="chips" id="f-cat"></div></div>
@@ -283,6 +303,8 @@
         <div class="group"><span class="label">Pluie</span><div class="chips" id="f-rain"></div></div>
         <div class="group"><span class="label">État</span><div class="chips" id="f-dirty"></div></div>
         <div class="group"><span class="label">Rangement</span><div class="chips" id="f-stored"></div></div>
+        <div class="group"><span class="label">Réparation</span><div class="chips" id="f-repair"></div></div>
+        <div class="group" id="f-repair-note-group" hidden><label class="label" for="f-repair-note">Quoi réparer ?</label><input type="text" id="f-repair-note" maxlength="80" placeholder="ex. bouton décousu, ourlet" autocomplete="off"></div>
         <div class="row">
           <div class="group" style="flex:1"><label class="label" for="f-size">Taille</label><input type="text" id="f-size" maxlength="20" placeholder="ex. M, 38" autocomplete="off"></div>
         </div>
@@ -403,6 +425,11 @@
 <!-- ============ VALISE : DÉTAIL ============ -->
 <div class="overlay" id="tripview-overlay" hidden>
   <div class="sheet" id="tripview"></div>
+</div>
+
+<!-- ============ UN JOUR DU CALENDRIER ============ -->
+<div class="overlay" id="cal-overlay" hidden>
+  <div class="sheet" id="cal-sheet"></div>
 </div>
 
 <!-- ============ STATISTIQUES ============ -->
