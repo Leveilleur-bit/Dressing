@@ -21,6 +21,9 @@ Et aussi :
 - une **fiche d'ajout courte** : photo, nom, catégorie, couleur, épaisseur ; le reste est deviné d'après le nom (« Chemise en lin » → haut, léger, lin, printemps-été, travail) et se corrige dans « Plus de détails » ;
 - la **recherche** dans le dressing, et le filtre **À trier** (pièces pas portées depuis 6 mois) ;
 - l'**occasion par défaut** en semaine et le week-end, réglable pour chaque personne ;
+- la **tenue préparée la veille** : le soir, l'appli montre la tenue de demain ; « Je la prépare pour demain » la garde, et le matin un message prévient si la météo a changé, avec « Adapter la tenue » ;
+- le **changement de saison** : l'appli repère les pièces hors saison à ranger et celles à ressortir ; une pièce rangée n'est plus proposée mais peut partir en voyage ;
+- les **statistiques** (onglet Dressing) : tenues portées, part du dressing utilisée, pièces, couleurs et marques les plus portées, pièces jamais portées, sur 1 mois à tout l'historique ;
 - la **valise** : destination, dates, météo sur place, une tenue par jour qui réutilise les mêmes pièces, et la liste à cocher.
 - le **détourage automatique** des photos, par un petit modèle d'IA qui tourne sur le téléphone (gratuit, rien n'est envoyé, environ 55 Mo téléchargés une seule fois) ; une méthode simple reste disponible dans Réglages, ainsi qu'un bouton pour refaire le détourage de toutes les photos ;
 - les catégories **Veste** et **Manteau** : un manteau quand il fait froid, une veste quand c'est doux, jamais les deux ;

@@ -61,13 +61,15 @@ export function countOutfits(items, cap = 2000) {
 }
 
 /** Les pièces qui ajouteraient le plus de tenues. */
-export function suggestGaps(items, max = 3) {
-  const live = items.filter((i) => !i.deleted);
+export function suggestGaps(items, max = 3, seasons = null) {
+  const live = items.filter((i) => !i.deleted && !i.stored);
   const base = countOutfits(live);
   const owned = (c) => live.some((i) => i.cat === c.cat && i.color === c.color && (i.pattern || "uni") === (c.pattern || "uni"));
   const res = [];
   for (const c of CANDIDATES) {
     if (owned(c)) continue;
+    // pas de sandales à conseiller en octobre : seulement ce qui sert maintenant ou bientôt
+    if (seasons && c.seasons && !c.seasons.some((x) => seasons.includes(x))) continue;
     const fake = { id: "gap", name: c.label, cat: c.cat, color: c.color, pattern: c.pattern || "uni", seasons: c.seasons, occ: c.occ };
     let gain;
     if (c.cat === "veste" || c.cat === "manteau") {

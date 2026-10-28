@@ -44,7 +44,7 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
   // une pièce réservée à la maison ne sort jamais
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
   const must = opts.must || null; // « Que porter avec… ? » : cette pièce doit faire partie de la tenue
-  const all = data.items.filter((i) => !i.deleted && (!i.dirty || (must && i.id === must.id)) && (home || !homeOnly(i) || (must && i.id === must.id)));
+  const all = data.items.filter((i) => !i.deleted && (!i.stored || opts.includeStored || (must && i.id === must.id)) && (!i.dirty || (must && i.id === must.id)) && (home || !homeOnly(i) || (must && i.id === must.id)));
   const items = all.filter((i) => i.cat !== "accessoire");
   const accessories = all.filter((i) => i.cat === "accessoire");
   const fb = data.feedback || {};
@@ -137,6 +137,8 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
     // valise : réutiliser ce qui est déjà dans la valise, éviter de remettre la même chose deux jours de suite
     // (un bas ou une veste se remettent facilement, un haut beaucoup moins)
     if (opts.packed && opts.packed.has(it.id)) s += { chaussures: 4, veste: 4, manteau: 4, bas: 3, haut: 1.5, robe: 1.5 }[it.cat] || 2;
+    // adapter une tenue préparée : un léger avantage aux pièces déjà choisies
+    if (opts.keep && opts.keep.has(it.id)) s += 1.2;
     if (opts.prev && opts.prev.has(it.id)) s -= { haut: 6, robe: 6, bas: 2 }[it.cat] || 0;
     return s;
   };
@@ -178,6 +180,8 @@ export function suggest(data, ctx, avoidKeys, opts = {}) {
 
     // deux mailles ouvertes l'une sur l'autre, ou un gilet comme protection contre la pluie
     const jk = pieces.find(isOuter);
+    // sous la pluie, une couche extérieure qui ne protège pas perd des points
+    if (jk && (w.rain || w.snow) && jk.rain !== "impermeable") s -= 1.5;
     if (jk && isKnit(jk)) {
       if (pieces.some((p) => p.cat === "haut" && isOpenKnit(p))) s -= 5;
       if ((w.rain || w.snow) && jk.rain !== "impermeable") s -= 4;
@@ -279,7 +283,7 @@ export function planTrip(data, days, base) {
   const avoid = [];
   for (const d of days) {
     const ctx = { ...base, ...d, restDays: 0 };
-    const r = suggest(data, ctx, avoid, { noRotation: true, packed, prev });
+    const r = suggest(data, ctx, avoid, { noRotation: true, packed, prev, includeStored: true });
     if (!r) { outfits.push({ day: d.day, pieces: [], reasons: [] }); continue; }
     r.pieces.forEach((p) => packed.add(p.id));
     prev = new Set(r.pieces.map((p) => p.id));

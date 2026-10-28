@@ -11,7 +11,7 @@ import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromCom
 import { detectColor } from "./js/colorid.js";
 import { removeBackground, onCutProgress } from "./js/cutout.js";
 
-const VERSION = "1.12.2";
+const VERSION = "1.13.0";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -200,6 +200,178 @@ function flatlay(pieces, small = false, interactive = false) {
   return '<div class="flatlay' + (small ? " small" : "") + '" style="aspect-ratio:100 / ' + Math.round(H) + '">' + html + "</div>";
 }
 
+// ---------------- STATISTIQUES ----------------
+let statsPeriod = 90;
+const PERIODS = [[30, "1 mois"], [90, "3 mois"], [183, "6 mois"], [365, "1 an"], [0, "Tout"]];
+function openStats() { renderStats(); $("stats-overlay").hidden = false; $("stats-sheet").scrollTop = 0; }
+function renderStats() {
+  const items = liveItems();
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const since = statsPeriod ? addDays(dayStr(0), -statsPeriod) : "0000";
+  const hist = (data().history || []).filter((h) => !h.deleted && h.day >= since && h.day <= dayStr(0));
+  const wears = new Map();
+  for (const h of hist) for (const id of h.items) wears.set(id, (wears.get(id) || 0) + 1);
+  const main = items.filter((i) => i.cat !== "accessoire");
+  const worn = items.filter((i) => wears.has(i.id));
+  const pct = items.length ? Math.round((worn.length / items.length) * 100) : 0;
+  const bar = (label, n, max, extra = "", swatch = "") => '<div class="st-row">' + (swatch ? '<span class="st-swatch" style="background:' + swatch + '"></span>' : "") + '<span class="st-label">' + label + "</span>" + extra +
+    '<span class="st-bar"><span style="width:' + Math.max(4, Math.round((n / (max || 1)) * 100)) + '%"></span></span><span class="st-val">' + n + "</span></div>";
+  const sum = (m) => [...m.entries()].sort((a, b) => b[1] - a[1]);
+  // couleurs et marques, pondérées par les ports (vêtements seulement)
+  const colors = new Map(), brands = new Map(), cats = new Map();
+  for (const [id, n] of wears) {
+    const it = byId.get(id); if (!it) continue;
+    if (it.cat !== "accessoire") colors.set(it.color, (colors.get(it.color) || 0) + n);
+    if (it.brand) brands.set(it.brand, (brands.get(it.brand) || 0) + n);
+  }
+  for (const c of CATS) { const all = items.filter((i) => i.cat === c.id); if (all.length) cats.set(c.id, { all: all.length, worn: all.filter((i) => wears.has(i.id)).length, label: c.label }); }
+  const top = sum(wears).filter(([id]) => byId.has(id)).slice(0, 8);
+  const never = items.filter((i) => !wears.has(i.id) && !i.stored && (!statsPeriod || (i.createdAt || 0) < Date.now() - statsPeriod * 864e5));
+  const periodTxt = statsPeriod ? "sur " + PERIODS.find((p) => p[0] === statsPeriod)[1] : "depuis le début";
+  let html = '<div class="sheet-head"><div><span class="label">Ton dressing</span><h2>Statistiques</h2></div><button class="x" type="button" data-stx="close" aria-label="Fermer">✕</button></div>' +
+    '<div class="chips">' + PERIODS.map(([d, l]) => '<button type="button" class="chip" data-stp="' + d + '" aria-pressed="' + (statsPeriod === d) + '">' + l + "</button>").join("") + "</div>";
+  if (!hist.length) {
+    html += '<p class="empty">Aucune tenue notée ' + esc(periodTxt) + '. Touche « Je la porte » chaque matin : les statistiques se remplissent toutes seules.</p>';
+  } else {
+    html += '<div class="st-tiles"><div class="st-tile"><strong>' + hist.length + '</strong><span>tenue' + (hist.length > 1 ? "s" : "") + " portée" + (hist.length > 1 ? "s" : "") + "</span></div>" +
+      '<div class="st-tile"><strong>' + pct + ' %</strong><span>du dressing porté (' + worn.length + " sur " + items.length + ")</span></div>" +
+      '<div class="st-tile"><strong>' + never.length + '</strong><span>pièce' + (never.length > 1 ? "s" : "") + " jamais portée" + (never.length > 1 ? "s" : "") + "</span></div></div>" +
+      '<p class="hint">' + esc(periodTxt[0].toUpperCase() + periodTxt.slice(1)) + ".</p>";
+    html += '<section class="st-sec"><h3>Les plus portées</h3>' + top.map(([id, n]) => { const it = byId.get(id); return '<button type="button" class="st-piece" data-sid="' + esc(id) + '">' + thumb(it) + bar(esc(it.name), n, top[0][1]) + "</button>"; }).join("") + "</section>";
+    const cs = sum(colors);
+    if (cs.length) html += '<section class="st-sec"><h3>Couleurs portées</h3><p class="hint">Nombre de fois où chaque couleur était dans ta tenue.</p>' + cs.slice(0, 8).map(([c, n]) => bar(esc((COLORS[c] || [c])[0]), n, cs[0][1], "", (COLORS[c] || [])[1] || "#999")).join("") + "</section>";
+    const bs = sum(brands);
+    if (bs.length) html += '<section class="st-sec"><h3>Marques portées</h3>' + bs.slice(0, 6).map(([b, n]) => bar(esc(b), n, bs[0][1])).join("") + "</section>";
+    html += '<section class="st-sec"><h3>Pièces portées par catégorie</h3><p class="hint">Combien de pièces de chaque catégorie ont servi au moins une fois.</p>' +
+      [...cats.values()].map((c) => bar(esc(c.label), c.worn, c.all, '<span class="st-of">sur ' + c.all + "</span>")).join("") + "</section>";
+    if (never.length) html += '<section class="st-sec"><h3>Jamais portées ' + esc(periodTxt) + '</h3><p class="hint">Pièces rangées et ajoutées récemment mises à part. Touche une pièce pour l\'ouvrir.</p><div class="season-grid">' +
+      never.slice(0, 16).map((it) => '<button type="button" class="season-item" data-sid="' + esc(it.id) + '">' + thumb(it) + '<span class="alt-name">' + esc(it.name) + "</span></button>").join("") + "</div>" +
+      (never.length > 16 ? '<p class="hint">Et ' + (never.length - 16) + " autres.</p>" : "") + "</section>";
+  }
+  $("stats-sheet").innerHTML = html;
+  hydratePhotos($("stats-sheet"));
+}
+
+// ---------------- RANGEMENT DE SAISON ----------------
+// une pièce « hors saison » ne porte aucune des saisons en cours ni de celle du mois prochain
+function seasonPlan(all) {
+  const today = dayStr(0);
+  // ranger : rien d'utile d'ici 2 mois ; ressortir : utile maintenant ou d'ici un mois
+  const cur = seasonOf(today), next = seasonOf(addDays(today, 30)), later = seasonOf(addDays(today, 60));
+  const any = (i, list) => !(i.seasons || []).length || list.some((x) => i.seasons.includes(x));
+  return {
+    cur, next,
+    toStore: all.filter((i) => !i.stored && !i.demo && !any(i, [cur, next, later])),
+    toTakeOut: all.filter((i) => i.stored && any(i, [cur, next]))
+  };
+}
+const SEASON_NAME = { printemps: "le printemps", ete: "l'été", automne: "l'automne", hiver: "l'hiver" };
+function renderSeasonCard(all) {
+  const box = $("season-card");
+  if (isDemo()) { box.hidden = true; return; }
+  const plan = seasonPlan(all);
+  const key = "dressing:season-later:" + plan.cur + "-" + plan.next + ":" + plan.toStore.length + "-" + plan.toTakeOut.length;
+  if ((plan.toStore.length < 3 && !plan.toTakeOut.length) || LS.get(key, false)) { box.hidden = true; return; }
+  const parts = [];
+  if (plan.toStore.length) parts.push(plan.toStore.length + " pièce" + (plan.toStore.length > 1 ? "s" : "") + " hors saison à ranger");
+  if (plan.toTakeOut.length) parts.push(plan.toTakeOut.length + " pièce" + (plan.toTakeOut.length > 1 ? "s" : "") + " rangée" + (plan.toTakeOut.length > 1 ? "s" : "") + " à ressortir");
+  const label = plan.cur === plan.next ? SEASON_NAME[plan.cur] : SEASON_NAME[plan.next];
+  box.innerHTML = '<div class="season-text"><strong>Changement de saison</strong><span>' + (plan.cur === plan.next ? "C'est " : "Bientôt ") + esc(label) + " : " + esc(parts.join(" et ")) + '.</span></div>' +
+    '<div class="actions"><button type="button" class="btn" data-season="later">Plus tard</button><button type="button" class="btn primary" data-season="open">Voir</button></div>';
+  box.dataset.key = key;
+  box.hidden = false;
+}
+let seasonSel = null;
+function openSeason() {
+  const plan = seasonPlan(liveItems());
+  seasonSel = { store: new Set(plan.toStore.map((i) => i.id)), out: new Set(plan.toTakeOut.map((i) => i.id)), plan };
+  renderSeasonSheet();
+  $("season-overlay").hidden = false; $("season-sheet").scrollTop = 0;
+}
+function renderSeasonSheet() {
+  const { plan, store, out } = seasonSel;
+  const grid = (list, set, kind) => '<div class="season-grid">' + list.map((it) => '<button type="button" class="season-item" data-sp="' + kind + ":" + esc(it.id) + '" aria-pressed="' + set.has(it.id) + '">' + thumb(it) + '<span class="alt-name">' + esc(it.name) + "</span></button>").join("") + "</div>";
+  $("season-sheet").innerHTML = '<div class="sheet-head"><div><span class="label">Rangement</span><h2>Changement de saison</h2></div><button class="x" type="button" data-season="close" aria-label="Fermer">✕</button></div>' +
+    '<p class="hint">Une pièce rangée n\'est plus proposée dans les tenues ni par la styliste, mais reste dans ton dressing (filtre « Rangées ») et peut partir en voyage. Touche une pièce pour la décocher.</p>' +
+    (plan.toStore.length ? '<section class="season-sec"><h3>À ranger</h3><p class="hint">Pas faites pour ' + esc(SEASON_NAME[plan.cur]) + (plan.next !== plan.cur ? " ni pour " + esc(SEASON_NAME[plan.next]) : "") + ".</p>" + grid(plan.toStore, store, "s") +
+      '<button type="button" class="btn primary block" data-season="store"' + (store.size ? "" : " disabled") + ">Ranger " + store.size + " pièce" + (store.size > 1 ? "s" : "") + "</button></section>" : "") +
+    (plan.toTakeOut.length ? '<section class="season-sec"><h3>À ressortir</h3><p class="hint">Rangées, mais de saison maintenant.</p>' + grid(plan.toTakeOut, out, "o") +
+      '<button type="button" class="btn primary block" data-season="takeout"' + (out.size ? "" : " disabled") + ">Ressortir " + out.size + " pièce" + (out.size > 1 ? "s" : "") + "</button></section>" : "") +
+    (!plan.toStore.length && !plan.toTakeOut.length ? '<p class="empty">Ton dressing est à jour pour la saison.</p>' : "");
+  hydratePhotos($("season-sheet"));
+}
+function setStored(ids, value) {
+  mutate((d) => { for (const it of d.items) if (ids.has(it.id)) { it.stored = value; it.updatedAt = Date.now(); } });
+}
+function seasonAction(act) {
+  if (act === "close") { $("season-overlay").hidden = true; return; }
+  if (act === "later") { const k = $("season-card").dataset.key; if (k) LS.set(k, true); $("season-card").hidden = true; return; }
+  if (act === "open") { openSeason(); return; }
+  if (act === "store") { const n = seasonSel.store.size; setStored(seasonSel.store, true); toast(n + " pièce" + (n > 1 ? "s rangées" : " rangée") + "."); }
+  if (act === "takeout") { const n = seasonSel.out.size; setStored(seasonSel.out, false); toast(n + " pièce" + (n > 1 ? "s ressorties" : " ressortie") + "."); }
+  setTimeout(() => { const plan = seasonPlan(liveItems()); seasonSel = { store: new Set(plan.toStore.map((i) => i.id)), out: new Set(plan.toTakeOut.map((i) => i.id)), plan }; renderSeasonSheet(); }, 80);
+}
+
+// ---------------- LA TENUE PRÉPARÉE LA VEILLE ----------------
+function toggleReady() {
+  if (!current) return;
+  const c = context();
+  const r = readyPick(c);
+  savePick(c);
+  mutate((d) => {
+    const p = (d.picks || {})[c.day]; if (!p) return;
+    if (r) { delete p.ready; delete p.readyAt; delete p.readyW; }
+    else { p.ready = true; p.readyAt = Date.now(); p.readyW = wsig(c); }
+    p.t = Date.now();
+  });
+  toast(r ? "Ce n'est plus la tenue prévue pour demain." : "✓ Prête pour demain. Elle t'attendra au réveil.");
+  if (!r && navigator.vibrate) { try { navigator.vibrate(30); } catch (e) {} }
+  setTimeout(renderOutfit, 50);
+}
+/** Ce qui a changé dans la météo entre la préparation et maintenant. */
+function weatherChange(before, now) {
+  const [r0, t0] = String(before || "").split("/"), [r1, t1] = now.split("/");
+  const out = [];
+  if (r0 !== r1) out.push(r1 === "pluie" ? "de la pluie est annoncée" : "la pluie n'est plus annoncée");
+  const rank = { froid: 0, doux: 1, chaud: 2 };
+  if (t0 && t0 !== t1) out.push(rank[t1] < rank[t0] ? "il fera plus froid que prévu" : "il fera plus doux que prévu");
+  return out;
+}
+function renderReady(worn, c) {
+  const box = $("ready-box");
+  const p = dayOffset === 0 && !worn ? readyPick(c) : null;
+  if (dayOffset === 1 && !worn && !readyPick(c)) {
+    box.innerHTML = '<p class="hint small">Prépare-la ce soir : demain matin, elle t\'attendra, avec un mot si la météo change d\'ici là.</p>';
+    box.hidden = false; return;
+  }
+  if (!p) { box.hidden = true; box.innerHTML = ""; return; }
+  const ch = c.live && p.readyW ? weatherChange(p.readyW, wsig(c)) : [];
+  box.innerHTML = '<div class="ready-head"><span>✓ Préparée hier soir</span><button type="button" class="link" data-ready="undo">Ne plus la garder</button></div>' +
+    (ch.length ? '<p class="ready-warn">La météo a changé depuis hier soir : ' + esc(ch.join(" et ")) + ".</p>" +
+      '<div class="actions"><button type="button" class="btn" data-ready="keep">Je la garde</button><button type="button" class="btn primary" data-ready="adapt">Adapter la tenue</button></div>' : "");
+  box.hidden = false;
+}
+function keepReady() {
+  const c = context();
+  mutate((d) => { const p = (d.picks || {})[c.day]; if (p) { p.readyW = wsig(c); p.t = Date.now(); } });
+  setTimeout(renderOutfit, 50);
+}
+/** Refait la tenue pour la nouvelle météo en gardant le plus possible de pièces préparées. */
+function adaptReady() {
+  if (!current) return;
+  const c = context();
+  const keepIds = new Set(current.pieces.map((p) => p.id));
+  const r = suggest({ items: liveItems(), feedback: data().feedback }, c, [], { keep: keepIds });
+  if (!r) return;
+  const changed = r.pieces.filter((p) => !keepIds.has(p.id)).map((p) => p.name);
+  current = { ...r, ai: false, title: "" };
+  seen.push(current.key);
+  savePick(c);
+  mutate((d) => { const p = (d.picks || {})[c.day]; if (p) { p.readyW = wsig(c); p.t = Date.now(); } });
+  setTimeout(renderOutfit, 50);
+  toast(changed.length ? "Adaptée : " + changed.join(", ") : "La tenue préparée convient toujours.");
+}
+
 // ---------------- LES 3 PROPOSITIONS DE LA STYLISTE ----------------
 let proposals = null; // {day, list: [{angle, title, why, tip, pieces}]}
 function openProposals() {
@@ -286,7 +458,7 @@ function openPiece(id) {
   const home = c.occ === "maison";
   const homeOnly = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
   const inOutfit = new Set(current.pieces.map((x) => x.id));
-  let cands = liveItems().filter((i) => !i.dirty && !inOutfit.has(i.id) && i.cat === p.cat && (home || !homeOnly(i)));
+  let cands = liveItems().filter((i) => !i.dirty && !i.stored && !inOutfit.has(i.id) && i.cat === p.cat && (home || !homeOnly(i)));
   let alts = [];
   if (p.cat === "accessoire") {
     const same = cands.filter((i) => (i.acc || "sac") === (p.acc || "sac"));
@@ -458,9 +630,23 @@ function wornEntry(c) {
   return (data().history || []).find((h) => !h.deleted && h.day === c.day && comboKey(h.items.map((id) => ({ id }))) === k) || null;
 }
 
+function readyPick(c) {
+  const p = (data().picks || {})[c.day];
+  return p && !p.deleted && p.ready && current && comboKey(p.ids.map((id) => ({ id }))) === comboKey(current.pieces) ? p : null;
+}
 function renderWorn(worn, c) {
   const btn = $("btn-wear"), box = $("worn-box");
   const when = dayOffset === 0 ? "aujourd'hui" : "demain";
+  renderReady(worn, c);
+  if (dayOffset === 1 && !worn) {
+    const r = readyPick(c);
+    btn.classList.toggle("done", !!r); btn.setAttribute("aria-pressed", !!r);
+    btn.textContent = r ? "✓ Prête pour demain" : "Je la prépare pour demain";
+    $("outfit-card").classList.toggle("is-worn", !!r);
+    $("worn-stamp").hidden = !r; $("worn-stamp").textContent = "✓ Prête";
+    box.hidden = true;
+    return;
+  }
   btn.classList.toggle("done", !!worn);
   btn.setAttribute("aria-pressed", !!worn);
   btn.textContent = worn ? "✓ Tenue portée " + when : "Je la porte";
@@ -533,7 +719,12 @@ function restoreFor(c) {
       return { key: comboKey(ps.filter((x) => x.cat !== "accessoire")), pieces: ps, reasons: same ? p.reasons || [] : [], tip: same ? p.tip : "", title: same ? p.title : "", ai: same && p.ai, week: same && p.week };
     }
   }
-  // 2. la tenue proposée plus tôt pour ce jour, si l'occasion et l'envie n'ont pas changé
+  // 2. la tenue préparée la veille : on la garde telle quelle (un message signale si la météo a changé)
+  if (p && !p.deleted && p.ready) {
+    const ps = usable(p.ids, false);
+    if (ps) return { key: comboKey(ps.filter((x) => x.cat !== "accessoire")), pieces: ps, reasons: p.reasons || [], tip: p.tip || "", title: p.title || "", ai: !!p.ai, week: !!p.week };
+  }
+  // 3. la tenue proposée plus tôt pour ce jour, si l'occasion et l'envie n'ont pas changé
   if (p && !p.deleted && p.occ === c.occ && (p.mood || "") === (c.mood || "") && (!p.wsig || p.wsig === wsig(c))) {
     const ps = usable(p.ids, false);
     if (ps && !incomplete(ps, c)) return { key: comboKey(ps.filter((x) => x.cat !== "accessoire")), pieces: ps, reasons: p.reasons || [], tip: p.tip || "", title: p.title || "", ai: !!p.ai, week: !!p.week };
@@ -543,7 +734,10 @@ function restoreFor(c) {
 function savePick(c) {
   if (!current) return;
   if (sync && !sync.loaded) return; // on attend d'avoir les données à jour avant d'écrire
+  const old = (data().picks || {})[c.day];
   const pick = { ids: current.pieces.map((p) => p.id), occ: c.occ, mood: c.mood || "", wsig: wsig(c), reasons: current.reasons || [], tip: current.tip || "", title: current.title || "", ai: !!current.ai, week: !!current.week, t: Date.now() };
+  // une tenue préparée la veille le reste, même si on change une pièce
+  if (old && !old.deleted && old.ready) { pick.ready = true; pick.readyAt = old.readyAt; pick.readyW = old.readyW; }
   const limit = addDays(dayStr(0), -7);
   mutate((d) => {
     d.picks = d.picks || {};
@@ -589,8 +783,9 @@ async function askAi() {
   if (!key) { showTab("settings"); setTimeout(() => $("ai-key").focus(), 50); toast("Ajoute d'abord ta clé API Anthropic."); return; }
   aiBusy = true; const btn = $("btn-ai"); btn.disabled = true; btn.textContent = "La styliste réfléchit…";
   const c = context();
-  const items = liveItems();
-  const byId = new Map(items.map((i) => [i.id, i]));
+  const allItems = liveItems();
+  const items = allItems.filter((i) => !i.stored);
+  const byId = new Map(allItems.map((i) => [i.id, i]));
   const fb = data().feedback || {};
   const names = (k) => k.split("|").map((id) => byId.get(id)).filter(Boolean).map((i) => i.name).join(" + ");
   const recent = (v) => Object.keys(fb).filter((k) => fb[k].v === v).sort((a, b) => (fb[b].t || 0) - (fb[a].t || 0));
@@ -650,8 +845,8 @@ function renderWardrobe() {
   $("count").textContent = isDemo() ? "exemple" : all.length + " pièce" + (all.length > 1 ? "s" : "");
   renderProgress(all);
   const isHome = (i) => (i.occ || []).length > 0 && i.occ.every((o) => o === "maison");
-  const inFilter = (i, f) => f === "tous" ? true : f === "maison" ? (i.occ || []).includes("maison") : f === "trier" ? toSort(i) : i.cat === f;
-  $("cat-filter").innerHTML = [{ id: "tous", label: "Tout" }].concat(CATS, [{ id: "maison", label: "Maison" }, { id: "trier", label: "À trier" }]).map((c) => {
+  const inFilter = (i, f) => f === "rangees" ? !!i.stored : i.stored ? false : f === "tous" ? true : f === "maison" ? (i.occ || []).includes("maison") : f === "trier" ? toSort(i) : i.cat === f;
+  $("cat-filter").innerHTML = [{ id: "tous", label: "Tout" }].concat(CATS, [{ id: "maison", label: "Maison" }, { id: "trier", label: "À trier" }], all.some((i) => i.stored) ? [{ id: "rangees", label: "Rangées" }] : []).map((c) => {
     const n = all.filter((i) => inFilter(i, c.id)).length;
     return '<button type="button" class="chip" id="filter-' + c.id + '" data-f="' + c.id + '" aria-pressed="' + (catFilter === c.id) + '">' + c.label + "<small>" + n + "</small></button>";
   }).join("");
@@ -668,9 +863,10 @@ function renderWardrobe() {
     .sort((a, b) => CATS.findIndex((c) => c.id === a.cat) - CATS.findIndex((c) => c.id === b.cat) || a.name.localeCompare(b.name, "fr"));
   $("grid").innerHTML = list.length ? list.map((it) =>
     '<button type="button" class="card' + (it.dirty ? " is-dirty" : "") + '" data-id="' + esc(it.id) + '"' + (it.demo ? " disabled" : "") + ">" +
-    thumb(it, it.demo ? "Exemple" : it.dirty ? "Au sale" : it.cat === "accessoire" ? catLabel(it) : "", isHome(it) ? "Maison" : "") +
+    thumb(it, it.demo ? "Exemple" : it.stored ? "Rangée" : it.dirty ? "Au sale" : it.cat === "accessoire" ? catLabel(it) : "", isHome(it) ? "Maison" : "") +
     '<span class="piece-name">' + esc(it.name) + '</span><span class="piece-meta">' + (it.brand ? esc(it.brand) + " · " : "") + wornText(it) + (it.wornCount ? " · " + it.wornCount + " fois" : "") + "</span></button>"
   ).join("") : '<p class="empty">' + (q ? "Aucune pièce ne correspond à « " + esc(search.trim()) + " »." : catFilter === "trier" && all.length ? "Rien à trier : tout a été porté ces 6 derniers mois." : all.length ? "Rien dans cette catégorie pour l'instant." : "Ton dressing est vide. Ajoute ton premier vêtement : une photo, un nom, et c'est parti.") + "</p>";
+  renderSeasonCard(all);
   hydratePhotos($("view-wardrobe"));
 }
 
@@ -987,7 +1183,7 @@ function renderProgress(all) {
   }
   pr.hidden = false;
   if (n < 4) { gp.hidden = true; return; }
-  const { total, gaps } = suggestGaps(all);
+  const { total, gaps } = suggestGaps(all, 3, [seasonOf(dayStr(0)), seasonOf(addDays(dayStr(0), 45))]);
   gp.innerHTML = '<div class="outfit-head"><span class="label">Pour plus de tenues</span><span class="progress">' + (total >= 2000 ? "2000+" : total) + " tenue" + (total > 1 ? "s" : "") + " possibles</span></div>" +
     (gaps.length ? '<ul class="gap-list">' + gaps.map((g) => '<li><span>Ajoute <strong>' + esc(g.label) + "</strong></span><span class=\"gain\">+" + g.gain + (g.cat === "veste" || g.cat === "manteau" ? " tenues couvertes" : " tenues") + "</span></li>").join("") + "</ul>" +
       '<p class="note small">D\'après ce que tu as déjà : couleurs, saisons et occasions qui vont ensemble. Utile avant les soldes.</p>'
@@ -1738,6 +1934,7 @@ function renderItemSheet() {
   $("f-season").innerHTML = chips(SEASONS, "seasons", true, "s");
   $("f-rain").innerHTML = chips(RAIN, "rain", false, "r");
   $("f-occ").innerHTML = chips(OCCS, "occ", true, "o");
+  $("f-stored").innerHTML = [[false, "Dans le dressing"], [true, "Rangée (hors saison)"]].map(([v, l]) => '<button type="button" class="chip" data-st="' + v + '" aria-pressed="' + (!!draft.stored === v) + '">' + l + "</button>").join("");
   $("f-dirty").innerHTML = [[false, "Propre"], [true, "Au sale"]].map(([v, l]) => '<button type="button" class="chip" data-d="' + v + '" aria-pressed="' + (!!draft.dirty === v) + '">' + l + "</button>").join("");
 }
 function setDraftPhoto(blob) {
@@ -1877,7 +2074,7 @@ async function saveItemForm(e) {
     const oldCut = editing ? editing.cut : null;
     const item = {
       id, name: draft.name, cat: draft.cat, color: draft.color, pattern: draft.pattern, warmth: draft.warmth,
-      cut, seasons: draft.seasons, rain: draft.rain, occ: draft.occ, dirty: !!draft.dirty, dirtyAt: draft.dirty ? (editing && editing.dirty && editing.dirtyAt) || Date.now() : null, photo,
+      cut, seasons: draft.seasons, rain: draft.rain, occ: draft.occ, stored: !!draft.stored, dirty: !!draft.dirty, dirtyAt: draft.dirty ? (editing && editing.dirty && editing.dirtyAt) || Date.now() : null, photo,
       brand: $("f-brand").value.trim() || null, size: $("f-size").value.trim() || null,
       composition: $("f-comp").value.trim() || null, care: $("f-care").value.trim() || null,
       styles: draft.styles, material: draft.material || null, acc: draft.cat === "accessoire" ? draft.acc || "sac" : null,
@@ -1945,7 +2142,8 @@ function bind() {
   delegate("mood-chips", "m", (m) => { markHonored(); mood = m; renderControls(); newSuggestion(true); });
 
   on("btn-other", "click", () => newSuggestion(false));
-  on("btn-wear", "click", wearCurrent);
+  on("btn-wear", "click", () => { if (dayOffset === 1 && !wornEntry(context())) toggleReady(); else wearCurrent(); });
+  on("ready-box", "click", (e) => { const b = e.target.closest("[data-ready]"); if (!b) return; if (b.dataset.ready === "adapt") adaptReady(); else if (b.dataset.ready === "keep") keepReady(); else if (b.dataset.ready === "undo") toggleReady(); });
   on("btn-ai", "click", askAi);
   on("btn-like", "click", () => {
     if (!current) return;
@@ -2016,6 +2214,7 @@ function bind() {
   delegate("f-mat", "mat", (v) => { draft.material = draft.material === v ? null : v; touch("material"); refill(); });
   delegate("f-occ", "o", (v) => { draft.occ = draft.occ.includes(v) ? draft.occ.filter((x) => x !== v) : draft.occ.concat(v); touch("occ"); refill(); });
   delegate("f-dirty", "d", (v) => { draft.dirty = v === "true"; renderItemSheet(); });
+  delegate("f-stored", "st", (v) => { draft.stored = v === "true"; renderItemSheet(); });
   on("btn-del", "click", deleteItem);
   on("btn-with", "click", () => { const it = editing && liveItems().find((i) => i.id === editing.id); if (!it) return; closeItem(); openWith(it); });
   delegate("f-cutmode", "cm", (v) => { draft.useCut = v === "true"; renderItemSheet(); });
@@ -2088,6 +2287,15 @@ function bind() {
   on("with-overlay", "click", (e) => { if (e.target === $("with-overlay")) $("with-overlay").hidden = true; });
   delegate("lay", "pid", (id) => openPiece(id));
   on("btn-audit", "click", openAudit);
+  on("btn-stats", "click", openStats);
+  delegate("stats-sheet", "stp", (d) => { statsPeriod = +d; renderStats(); });
+  delegate("stats-sheet", "stx", () => { $("stats-overlay").hidden = true; });
+  delegate("stats-sheet", "sid", (id) => { const it = liveItems().find((i) => i.id === id); if (it) { $("stats-overlay").hidden = true; openItem(it); } });
+  on("stats-overlay", "click", (e) => { if (e.target === $("stats-overlay")) $("stats-overlay").hidden = true; });
+  delegate("season-card", "season", seasonAction);
+  delegate("season-sheet", "season", seasonAction);
+  delegate("season-sheet", "sp", (v) => { const [k, id] = v.split(":"); const set = k === "s" ? seasonSel.store : seasonSel.out; if (set.has(id)) set.delete(id); else set.add(id); renderSeasonSheet(); });
+  on("season-overlay", "click", (e) => { if (e.target === $("season-overlay")) $("season-overlay").hidden = true; });
   delegate("audit-sheet", "au", (v) => { if (v === "close") $("audit-overlay").hidden = true; else runAudit(); });
   delegate("audit-sheet", "aid", (id) => { const it = liveItems().find((i) => i.id === id); if (it) { $("audit-overlay").hidden = true; openItem(it); } });
   on("audit-overlay", "click", (e) => { if (e.target === $("audit-overlay")) $("audit-overlay").hidden = true; });

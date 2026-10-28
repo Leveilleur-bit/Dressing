@@ -81,6 +81,7 @@
       </div>
       <button class="btn block" id="btn-ai" type="button">Demander à la styliste</button>
       <button class="link" id="btn-props" type="button" hidden>Revoir les 3 propositions de la styliste</button>
+      <div class="ready-box" id="ready-box" hidden></div>
       <button class="btn primary block" id="btn-wear" type="button">Je la porte</button>
       <div class="worn-box" id="worn-box" hidden></div>
       <p class="note" id="outfit-msg" hidden></p>
@@ -106,6 +107,7 @@
     <div class="view" id="wd-pieces">
       <section class="progress-card" id="progress" hidden></section>
       <section class="gaps" id="gaps" hidden></section>
+      <section class="season-card" id="season-card" hidden></section>
       <input type="search" id="search" placeholder="Rechercher : jean, rouge, pull…" autocomplete="off" aria-label="Rechercher dans le dressing">
       <div class="chips" id="cat-filter"></div>
       <div class="chips brands" id="brand-chips" hidden></div>
@@ -120,6 +122,7 @@
       <button class="btn primary block" type="button" id="btn-add">Ajouter un vêtement</button>
       <button class="btn block" type="button" id="btn-batch">Ajouter plusieurs vêtements</button>
       <button class="btn block" type="button" id="btn-audit">Bilan du dressing par la styliste</button>
+      <button class="btn block" type="button" id="btn-stats">Statistiques</button>
       <div class="grid" id="grid"></div>
     </div>
 
@@ -279,6 +282,7 @@
         <div class="group"><span class="label">Style de la pièce</span><div class="chips" id="f-style"></div></div>
         <div class="group"><span class="label">Pluie</span><div class="chips" id="f-rain"></div></div>
         <div class="group"><span class="label">État</span><div class="chips" id="f-dirty"></div></div>
+        <div class="group"><span class="label">Rangement</span><div class="chips" id="f-stored"></div></div>
         <div class="row">
           <div class="group" style="flex:1"><label class="label" for="f-size">Taille</label><input type="text" id="f-size" maxlength="20" placeholder="ex. M, 38" autocomplete="off"></div>
         </div>
@@ -399,6 +403,16 @@
 <!-- ============ VALISE : DÉTAIL ============ -->
 <div class="overlay" id="tripview-overlay" hidden>
   <div class="sheet" id="tripview"></div>
+</div>
+
+<!-- ============ STATISTIQUES ============ -->
+<div class="overlay" id="stats-overlay" hidden>
+  <div class="sheet" id="stats-sheet"></div>
+</div>
+
+<!-- ============ CHANGEMENT DE SAISON ============ -->
+<div class="overlay" id="season-overlay" hidden>
+  <div class="sheet" id="season-sheet"></div>
 </div>
 
 <!-- ============ BILAN DU DRESSING ============ -->

@@ -384,3 +384,45 @@ button.fl-item:focus-visible { outline: 2px solid var(--accent, #2b3fd1); outlin
 .audit-dupe p { margin: 0; font-size: .9rem; }
 .audit-dupe-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .audit-buys { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: .92rem; line-height: 1.4; }
+
+/* tenue préparée la veille */
+.ready-box { display: grid; gap: 8px; }
+.ready-box .hint { margin: 0; text-align: center; }
+.ready-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-weight: 600; }
+.ready-warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 12%, transparent); line-height: 1.4; }
+
+/* changement de saison */
+.season-card { border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 10px; background: var(--surface); }
+.season-text { display: grid; gap: 2px; }
+.season-text span { color: var(--muted); font-size: .92rem; }
+.season-card .actions { justify-content: flex-end; }
+#season-sheet { display: grid; gap: 12px; }
+.season-sec { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
+.season-sec h3 { margin: 0; font-size: 1.05rem; }
+.season-sec .hint { margin: 0; }
+.season-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.season-item { border: 2px solid transparent; background: none; padding: 2px; border-radius: 12px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; color: inherit; font: inherit; text-align: left; min-width: 0; }
+.season-item[aria-pressed="true"] { border-color: var(--accent); }
+.season-item[aria-pressed="false"] .thumb { opacity: .45; }
+.season-item .alt-name { font-size: .72rem; }
+
+/* statistiques */
+#stats-sheet { display: grid; gap: 12px; }
+.st-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.st-tile { border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 2px; background: var(--surface); }
+.st-tile strong { font-size: 1.5rem; line-height: 1.1; }
+.st-tile span { font-size: .78rem; color: var(--muted); line-height: 1.3; }
+.st-sec { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
+.st-sec h3 { margin: 0; font-size: 1.05rem; }
+.st-sec .hint { margin: 0; }
+.st-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "sw label val" "bar bar bar"; column-gap: 8px; row-gap: 4px; align-items: center; width: 100%; }
+.st-row:not(:has(.st-swatch)) { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "label of val" "bar bar bar"; }
+.st-swatch { grid-area: sw; width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); }
+.st-label { grid-area: label; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-of { grid-area: of; font-size: .78rem; color: var(--muted); }
+.st-val { grid-area: val; font-variant-numeric: tabular-nums; font-size: .9rem; font-weight: 600; }
+.st-bar { grid-area: bar; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--muted) 18%, transparent); overflow: hidden; }
+.st-bar span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.st-piece { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: center; background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.st-piece .thumb { width: 44px; height: 44px; }
+.st-piece .thumb .tag { display: none; }
