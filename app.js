@@ -11,7 +11,7 @@ import { askStylist, testKey, AiError, recognizeItem, readLabel, materialFromCom
 import { detectColor } from "./js/colorid.js";
 import { removeBackground, onCutProgress } from "./js/cutout.js";
 
-const VERSION = "1.14.0";
+const VERSION = "1.14.1";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -836,6 +836,38 @@ async function askAi() {
     msg.hidden = false;
   }
   aiBusy = false; btn.textContent = "Demander à la styliste"; btn.disabled = !current;
+}
+
+// ---------------- ÉTAT DE LA STYLISTE ----------------
+let aiChanging = false, aiChecking = false;
+const AI_ERR = { auth: "Anthropic ne reconnaît plus cette clé (supprimée ou expirée). Colle une nouvelle clé.", credit: "Le compte Anthropic n'a plus de crédit : recharge-le dans la console Anthropic.", network: "Pas de connexion internet pour vérifier.", rate: "Trop de demandes : réessaie dans une minute.", busy: "Anthropic est surchargé : réessaie plus tard." };
+function renderAiState() {
+  const k = aiKey();
+  const chk = LS.get("dressing:aikey-check", null);
+  const showForm = !k || aiChanging;
+  $("ai-connected").hidden = !k || aiChanging;
+  $("ai-form").hidden = !showForm;
+  $("btn-ai-cancel").hidden = !(k && aiChanging);
+  $("btn-ai-del").hidden = !k;
+  $("btn-ai-save").textContent = k && aiChanging ? "Vérifier et remplacer" : "Vérifier et enregistrer";
+  if (!k) return;
+  const when = chk && chk.at ? new Date(chk.at).toLocaleString("fr-FR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : null;
+  const state = aiChecking ? "checking" : !chk ? "unknown" : chk.ok ? "ok" : chk.kind === "network" || chk.kind === "rate" || chk.kind === "busy" ? "unknown" : "bad";
+  $("ai-dot").className = "ai-dot is-" + state;
+  $("ai-state-title").textContent = { ok: "Styliste connectée", checking: "Vérification…", unknown: "Clé enregistrée, connexion non vérifiée", bad: "Styliste déconnectée" }[state];
+  $("ai-state-detail").textContent = "Clé …" + k.slice(-4) + " enregistrée sur cet appareil" +
+    (state === "ok" && when ? " · vérifiée le " + when : "") + (chk && !chk.ok && AI_ERR[chk.kind] ? ". " + AI_ERR[chk.kind] : "");
+  $("btn-ai-test").disabled = aiChecking;
+}
+/** Petite vérification (moins d'un centième de centime) : à la demande, ou une fois par jour en ouvrant les réglages. */
+async function checkAiKey(force) {
+  const k = aiKey(); if (!k || aiChecking) return;
+  const chk = LS.get("dressing:aikey-check", null);
+  if (!force && chk && chk.ok && Date.now() - chk.at < 864e5) return;
+  aiChecking = true; renderAiState();
+  try { await testKey(k); LS.set("dressing:aikey-check", { ok: true, at: Date.now() }); if (force) toast("✓ La styliste répond."); }
+  catch (e) { LS.set("dressing:aikey-check", { ok: false, at: Date.now(), kind: e.kind || "other" }); if (force) toast(AI_ERR[e.kind] || "La vérification n'a pas abouti."); }
+  aiChecking = false; renderAiState();
 }
 
 function setPrefs(patch) {
@@ -1816,8 +1848,7 @@ function renderSettings() {
   renderCutChips(); renderRecut();
   if (!($("looks").contains(document.activeElement) && document.activeElement.tagName === "INPUT")) renderLooks();
   const k = aiKey();
-  if (document.activeElement !== $("ai-key")) $("ai-key").value = k ? "••••••••" + k.slice(-4) : "";
-  $("btn-ai-del").hidden = !k;
+  renderAiState();
   $("btn-ai").textContent = aiBusy ? "La styliste réfléchit…" : "Demander à la styliste";
   $("loc-current").textContent = settings.loc ? "Lieu actuel : " + settings.loc.name : "Aucun lieu choisi.";
   $("wk-chips").innerHTML = OCCS.map((o) => '<button type="button" class="chip" data-wk="' + o.id + '" aria-pressed="' + (weekdayOcc() === o.id) + '">' + o.label + "</button>").join("");
@@ -2248,6 +2279,7 @@ function deleteItem() {
 
 // ---------------- onglets ----------------
 function showTab(which) {
+  if (which === "settings") setTimeout(() => checkAiKey(false), 300);
   for (const t of ["today", "wardrobe", "agenda", "settings"]) {
     $("view-" + t).hidden = t !== which;
     $("tab-" + t).setAttribute("aria-selected", t === which);
@@ -2550,8 +2582,9 @@ function bind() {
     const id = e.target.dataset.lookNote; if (!id) return; const v = e.target.value.trim();
     mutate((d) => { if (d.looks && d.looks[id]) { d.looks[id].note = v; d.looks[id].t = Date.now(); } });
   });
-  on("ai-key", "focus", (e) => { if (e.target.value.startsWith("••")) e.target.value = ""; });
-  on("ai-key", "blur", () => setTimeout(renderSettings, 200));
+  on("btn-ai-change", "click", () => { aiChanging = true; renderAiState(); setTimeout(() => $("ai-key").focus(), 50); });
+  on("btn-ai-cancel", "click", () => { aiChanging = false; $("ai-key").value = ""; $("ai-key-status").hidden = true; renderAiState(); });
+  on("btn-ai-test", "click", () => checkAiKey(true));
   on("btn-ai-save", "click", async () => {
     const st = $("ai-key-status");
     const v = $("ai-key").value.trim();
@@ -2560,7 +2593,9 @@ function bind() {
     try {
       await testKey(v);
       LS.set("dressing:aikey", v);
-      st.textContent = "Clé enregistrée sur cet appareil. Le bouton « Demander à la styliste » est prêt.";
+      LS.set("dressing:aikey-check", { ok: true, at: Date.now() });
+      aiChanging = false; $("ai-key").value = "";
+      st.textContent = "✓ Clé vérifiée et enregistrée sur cet appareil. La styliste est prête.";
     } catch (e) {
       st.textContent = e.kind === "auth" ? "Anthropic ne reconnaît pas cette clé. Vérifie qu'elle est complète."
         : e.kind === "credit" ? "La clé fonctionne mais le compte n'a pas de crédit. Ajoute du crédit dans la console Anthropic."
@@ -2569,7 +2604,18 @@ function bind() {
     }
     renderSettings();
   });
-  on("btn-ai-del", "click", () => { LS.del("dressing:aikey"); $("ai-key-status").textContent = "Clé retirée de cet appareil."; $("ai-key-status").hidden = false; renderSettings(); });
+  on("btn-ai-del", "click", () => {
+    const b = $("btn-ai-del");
+    // deux appuis pour éviter de retirer la clé par erreur
+    if (!b.dataset.confirm) {
+      b.dataset.confirm = "1"; b.textContent = "Toucher encore pour retirer la clé (il faudra la recoller)";
+      clearTimeout(b._t); b._t = setTimeout(() => { delete b.dataset.confirm; b.textContent = "Retirer la clé de cet appareil"; }, 4000);
+      return;
+    }
+    delete b.dataset.confirm; b.textContent = "Retirer la clé de cet appareil";
+    LS.del("dressing:aikey"); LS.del("dressing:aikey-check"); aiChanging = false;
+    $("ai-key-status").textContent = "Clé retirée de cet appareil. La styliste est déconnectée."; $("ai-key-status").hidden = false; renderSettings();
+  });
   delegate("wk-chips", "wk", (v) => setPrefs({ weekdayOcc: v }));
   delegate("we-chips", "we", (v) => setPrefs({ weekendOcc: v }));
   delegate("rest-chips", "r", (v) => { settings.restDays = +v; saveSettings(); renderSettings(); newSuggestion(true); });

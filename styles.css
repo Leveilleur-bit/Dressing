@@ -460,3 +460,15 @@ button.fl-item:focus-visible { outline: 2px solid var(--accent, #2b3fd1); outlin
 .cal-img img, .cal-img svg { max-width: 100%; max-height: 100%; object-fit: contain; }
 #cal-sheet { display: grid; gap: 12px; }
 #cal-sheet .flatlay { max-width: 300px; margin: 0 auto; }
+
+/* état de la styliste */
+.ai-status { border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 6px; background: var(--surface); }
+.ai-status-head { display: flex; align-items: center; gap: 8px; }
+.ai-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.ai-dot.is-ok { background: #2e9d5b; }
+.ai-dot.is-bad { background: #d14b3f; }
+.ai-dot.is-checking { background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
+@keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
+.ai-status .actions { margin-top: 4px; }
+.danger-link { color: #c2453a; font-size: .85rem; justify-self: start; margin-top: 4px; }
+#ai-form[hidden] { display: none; }

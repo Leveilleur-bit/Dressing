@@ -194,16 +194,27 @@
     <div class="looks" id="looks"></div>
 
     <div class="outfit-head" style="margin-top:8px"><h2>Styliste IA</h2></div>
-    <p class="hint">Le bouton « Demander à la styliste » envoie à Claude tes vêtements avec une planche photo, la météo, tes styles, tes looks favoris et ce que tu portes vraiment, et reçoit une tenue expliquée. Il faut une clé API Anthropic : environ 2 à 3 centimes par demande. La clé reste sur cet appareil.</p>
-    <div class="group">
-      <label class="label" for="ai-key">Clé API Anthropic</label>
-      <input type="password" id="ai-key" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <p class="hint">Le bouton « Demander à la styliste » envoie à Claude tes vêtements avec une planche photo, la météo, tes styles, tes looks favoris et ce que tu portes vraiment, et reçoit une tenue expliquée. Il faut une clé API Anthropic : environ 3 à 4 centimes par demande. La clé reste sur cet appareil.</p>
+    <div class="ai-status" id="ai-connected" hidden>
+      <div class="ai-status-head"><span class="ai-dot" id="ai-dot"></span><strong id="ai-state-title">Styliste connectée</strong></div>
+      <span class="note small" id="ai-state-detail"></span>
+      <div class="actions">
+        <button class="btn" type="button" id="btn-ai-test">Tester la connexion</button>
+        <button class="btn" type="button" id="btn-ai-change">Changer de clé</button>
+      </div>
     </div>
-    <div class="actions">
-      <button class="btn" type="button" id="btn-ai-del" hidden>Retirer la clé</button>
-      <button class="btn primary" type="button" id="btn-ai-save">Vérifier et enregistrer</button>
+    <div id="ai-form">
+      <div class="group">
+        <label class="label" for="ai-key">Clé API Anthropic</label>
+        <input type="password" id="ai-key" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <div class="actions">
+        <button class="btn" type="button" id="btn-ai-cancel" hidden>Annuler</button>
+        <button class="btn primary" type="button" id="btn-ai-save">Vérifier et enregistrer</button>
+      </div>
     </div>
     <p class="note" id="ai-key-status" hidden></p>
+    <button class="link danger-link" type="button" id="btn-ai-del" hidden>Retirer la clé de cet appareil</button>
 
     <div class="outfit-head" style="margin-top:8px"><h2>Détourage des photos</h2></div>
     <p class="hint">« Précis » utilise un petit modèle d'IA qui tourne sur le téléphone : rien n'est envoyé, c'est gratuit, et ça marche même sur un fond chargé. Il se télécharge une seule fois (environ 55 Mo, de préférence en Wi-Fi). « Simple » marche seulement sur un fond uni et bien contrasté.</p>
